@@ -65,11 +65,8 @@ function reinstantiateTiles() {
   tiles.registerPlugin(new TilesFadePlugin());
   tiles.registerPlugin(
     new GLTFExtensionsPlugin({
-      // Note the DRACO compression files need to be supplied via an explicit source.
-      // We use unpkg here but in practice should be provided by the application.
-      dracoLoader: new DRACOLoader().setDecoderPath(
-        "https://unpkg.com/three@0.153.0/examples/jsm/libs/draco/gltf/"
-      ),
+      // Using local files from public directory for DRACO decoder
+      dracoLoader: new DRACOLoader().setDecoderPath("/draco/"),
     })
   );
 

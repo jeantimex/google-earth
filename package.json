@@ -4,8 +4,9 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "copy-draco": "mkdir -p public/draco && cp -r node_modules/three/examples/jsm/libs/draco/gltf/* public/draco/",
+    "dev": "npm run copy-draco && vite",
+    "build": "npm run copy-draco && vite build",
     "preview": "vite preview"
   },
   "keywords": [],
