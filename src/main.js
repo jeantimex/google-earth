@@ -235,7 +235,11 @@ function reinstantiateTiles() {
   tiles.registerPlugin(
     new GLTFExtensionsPlugin({
       // Using local files from public directory for DRACO decoder
-      dracoLoader: new DRACOLoader().setDecoderPath("draco/"),
+      dracoLoader: new DRACOLoader().setDecoderPath(
+        window.location.pathname.includes('/google-earth/') ? 
+        "/google-earth/draco/" : 
+        "/draco/"
+      ),
     })
   );
 
@@ -378,7 +382,9 @@ function init() {
     -115.16205, 
     640, 
     82.5, 
-    '/assets/emojidemo.mp4'
+    window.location.pathname.includes('/google-earth/') ? 
+      '/google-earth/assets/emojidemo.mp4' : 
+      '/assets/emojidemo.mp4'
   );
   
   // Add a click handler to the document to help with video autoplay

@@ -1,5 +1,6 @@
 {
   "name": "google-earth",
+  "homepage": "https://jeantimex.github.io/google-earth",
   "version": "1.0.0",
   "type": "module",
   "main": "index.js",
@@ -7,13 +8,16 @@
     "copy-draco": "mkdir -p public/draco && cp -r node_modules/three/examples/jsm/libs/draco/gltf/* public/draco/",
     "dev": "npm run copy-draco && vite",
     "build": "npm run copy-draco && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "predeploy": "npm run build",
+    "deploy": "gh-pages -d dist"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "devDependencies": {
+    "gh-pages": "^6.3.0",
     "vite": "^6.2.1"
   },
   "dependencies": {
