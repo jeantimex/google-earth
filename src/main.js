@@ -39,11 +39,61 @@ const params = {
   ),
   errorTarget: 40,
 
+  latitude: 0,
+  longitude: 0,
+  altitude: 9000000,
+  autoUpdate: true,
+  goToLocation: () => {
+    const { latitude, longitude, altitude } = params;
+    
+    // Create a new URL with the updated parameters
+    const urlParams = new URLSearchParams();
+    urlParams.set("lat", latitude.toFixed(4));
+    urlParams.set("lon", longitude.toFixed(4));
+    urlParams.set("height", altitude.toFixed(2));
+    
+    // Preserve other parameters
+    if (params.useBatchedMesh) {
+      urlParams.set("batched", 1);
+    }
+    
+    // Update the hash without triggering the hashchange event
+    window.history.replaceState(undefined, undefined, `#${urlParams}`);
+    
+    // Manually call initFromHash to update the camera position
+    initFromHash();
+  },
+
   reload: reinstantiateTiles,
 };
 
 init();
 animate();
+
+// Set initial location in URL if not already set
+(function setInitialLocation() {
+  const hash = window.location.hash.replace(/^#/, "");
+  const urlParams = new URLSearchParams(hash);
+  
+  // Only set default location if lat and lon are not already in the URL
+  if (!urlParams.has("lat") && !urlParams.has("lon")) {
+    // Use the default values from params
+    urlParams.set("lat", params.latitude.toFixed(4));
+    urlParams.set("lon", params.longitude.toFixed(4));
+    urlParams.set("height", params.altitude.toFixed(2));
+    
+    // Preserve other parameters
+    if (params.useBatchedMesh) {
+      urlParams.set("batched", 1);
+    }
+    
+    // Update the URL hash
+    window.history.replaceState(undefined, undefined, `#${urlParams}`);
+    
+    // Call initFromHash to position the camera
+    initFromHash();
+  }
+})();
 
 function reinstantiateTiles() {
   if (tiles) {
@@ -155,6 +205,31 @@ function init() {
     transition.toggle();
   });
 
+  const locationFolder = gui.addFolder('Location Controls');
+  locationFolder.add(params, 'latitude', -90, 90).name('Latitude').step(0.0001)
+    .onChange(() => {
+      // Update view when latitude changes
+      if (params.autoUpdate) {
+        params.goToLocation();
+      }
+    });
+  locationFolder.add(params, 'longitude', -180, 180).name('Longitude').step(0.0001)
+    .onChange(() => {
+      // Update view when longitude changes
+      if (params.autoUpdate) {
+        params.goToLocation();
+      }
+    });
+  locationFolder.add(params, 'altitude', 100, 10000000).name('Altitude (m)').step(100)
+    .onChange(() => {
+      // Update view when altitude changes
+      if (params.autoUpdate) {
+        params.goToLocation();
+      }
+    });
+  locationFolder.add(params, 'goToLocation').name('Go to Location');
+  locationFolder.add(params, 'autoUpdate').name('Auto-Update View');
+
   const mapsOptions = gui.addFolder("Google Photorealistic Tiles");
   mapsOptions.add(params, "useBatchedMesh").listen();
   mapsOptions.add(params, "reload");
@@ -257,6 +332,11 @@ function initFromHash() {
   const lat = parseFloat(urlParams.get("lat"));
   const lon = parseFloat(urlParams.get("lon"));
   const height = parseFloat(urlParams.get("height")) || 1000;
+  
+  // Update the params to reflect the current position
+  params.latitude = lat;
+  params.longitude = lon;
+  params.altitude = height;
 
   if (urlParams.has("az") && urlParams.has("el")) {
     // get the az el fields for rotation if present
