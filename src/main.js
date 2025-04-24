@@ -25,7 +25,10 @@ import {
   MeshBasicMaterial,
   Mesh,
   Color,
-  DoubleSide
+  DoubleSide,
+  VideoTexture,
+  LinearFilter,
+  RGBAFormat
 } from "three";
 import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
 import { GUI } from "three/examples/jsm/libs/lil-gui.module.min.js";
@@ -34,67 +37,103 @@ import Stats from "three/examples/jsm/libs/stats.module.js";
 let controls, scene, renderer, tiles, transition;
 let statsContainer, stats;
 let locationSphere; // Reference to the location sphere
+let videoTexture;
+let videoElement;
+
+// Create a video texture for the sphere
+function createVideoTexture(videoPath) {
+  // Create video element
+  videoElement = document.createElement('video');
+  videoElement.src = videoPath;
+  videoElement.loop = true;
+  videoElement.muted = true; // Must be muted for autoplay to work in most browsers
+  videoElement.playsInline = true;
+  videoElement.crossOrigin = 'anonymous';
+  videoElement.autoplay = true;
+  
+  // Force video to load
+  videoElement.load();
+  
+  // Create video texture
+  videoTexture = new VideoTexture(videoElement);
+  videoTexture.minFilter = LinearFilter;
+  videoTexture.magFilter = LinearFilter;
+  videoTexture.format = RGBAFormat;
+  
+  // Start playing the video with more aggressive approach
+  const playVideo = () => {
+    const playPromise = videoElement.play();
+    
+    if (playPromise !== undefined) {
+      playPromise.then(() => {
+        console.log("Video playback started successfully");
+      }).catch(error => {
+        console.error("Error playing video:", error);
+        // Try again after user interaction
+        document.addEventListener('click', () => {
+          videoElement.play();
+        }, { once: true });
+      });
+    }
+  };
+  
+  // Play video when it's loaded
+  videoElement.addEventListener('loadeddata', playVideo);
+  
+  // Also try when metadata is loaded
+  videoElement.addEventListener('loadedmetadata', playVideo);
+  
+  // Try to play immediately as well
+  playVideo();
+  
+  return videoTexture;
+}
 
 // Add a function to create a sphere at geographic coordinates
-function addSphereAtLocation(lat, lon, altitude, radius, color) {
+function addSphereAtLocation(lat, lon, altitude, radius, videoPath) {
   // Skip if tiles aren't initialized
   if (!tiles) return null;
   
-  // Create sphere geometry with more segments for better grid appearance
-  const geometry = new SphereGeometry(radius, 48, 48);
+  // Create sphere geometry with more segments for better texture mapping
+  const geometry = new SphereGeometry(radius, 64, 64);
   
-  // Create a wireframe material for the MSG Sphere look
-  const wireframeMaterial = new MeshBasicMaterial({ 
-    color: new Color(color),
-    wireframe: true,
-    wireframeLinewidth: 2
-  });
+  // Create a texture from the video
+  const texture = createVideoTexture(videoPath);
   
-  // Create a solid material for the base
-  const solidMaterial = new MeshBasicMaterial({ 
-    color: new Color('#000000'),  // Black base
-    transparent: false,
-    opacity: 1.0,
-    wireframe: false,
+  // Create material with video texture
+  const material = new MeshBasicMaterial({
+    map: texture,
     side: DoubleSide
   });
   
-  // Create the main sphere mesh with wireframe
-  const wireframeSphere = new Mesh(geometry, wireframeMaterial);
-  
-  // Create a slightly smaller solid sphere inside
-  const innerGeometry = new SphereGeometry(radius * 0.98, 48, 48);
-  const innerSphere = new Mesh(innerGeometry, solidMaterial);
-  
-  // Add the inner sphere as a child of the wireframe sphere
-  wireframeSphere.add(innerSphere);
+  // Create the sphere mesh
+  const sphere = new Mesh(geometry, material);
   
   // Position the sphere at the geographic coordinates
   WGS84_ELLIPSOID.getCartographicToPosition(
     lat * MathUtils.DEG2RAD,
     lon * MathUtils.DEG2RAD,
     altitude,
-    wireframeSphere.position
+    sphere.position
   );
   
   // Apply the tiles matrix world transformation
-  wireframeSphere.position.applyMatrix4(tiles.group.matrixWorld);
+  sphere.position.applyMatrix4(tiles.group.matrixWorld);
   
-  // Align the sphere with the Earth's surface at this location
-  // Calculate the normal vector at this position (pointing away from Earth center)
-  const normalVector = wireframeSphere.position.clone().normalize();
+  // Align the sphere with the Earth's surface
+  sphere.lookAt(0, 0, 0);
   
-  // Create a rotation matrix to align the sphere with the surface
-  // This makes the sphere's "up" direction align with the normal vector
-  wireframeSphere.lookAt(0, 0, 0);
+  // Rotate the sphere by 270 degrees (3π/2) around its local X axis to make it upside down
+  // This is equivalent to the original 90 degrees + 180 degrees to flip it
+  sphere.rotateX(Math.PI * 3/2);
   
-  // Rotate the sphere by 90 degrees around its local X axis
-  wireframeSphere.rotateX(Math.PI / 2);
+  // Add a 15-degree tilt around the Y axis to better see the face
+  sphere.rotateZ(Math.PI * 20/180);
   
   // Add the sphere to the scene
-  scene.add(wireframeSphere);
+  scene.add(sphere);
   
-  return wireframeSphere;
+  return sphere;
 }
 
 const params = {
@@ -107,10 +146,11 @@ const params = {
   ),
   errorTarget: 40,
 
-  latitude: 0,
-  longitude: 0,
-  altitude: 9000000,
+  latitude: 36.1275,
+  longitude: -115.1701,
+  altitude: 952,
   autoUpdate: true,
+  skipNextHashUpdate: false,
   goToLocation: () => {
     const { latitude, longitude, altitude } = params;
     
@@ -155,6 +195,11 @@ animate();
     urlParams.set("lat", formatNumber(params.latitude));
     urlParams.set("lon", formatNumber(params.longitude));
     urlParams.set("height", formatNumber(params.altitude));
+    
+    // Add azimuth, elevation and roll
+    urlParams.set("az", "131.25");
+    urlParams.set("el", "-32.91");
+    urlParams.set("roll", "0");
     
     // Preserve other parameters
     if (params.useBatchedMesh) {
@@ -327,8 +372,21 @@ function init() {
   initFromHash();
   setInterval(updateHash, 100);
 
-  // Add a blue sphere at Las Vegas coordinates - make it much larger (20km radius) and elevated
-  locationSphere = addSphereAtLocation(36.12125, -115.16205, 640, 82.5, '#00AAFF');
+  // Add a sphere with emoji video at Las Vegas coordinates
+  locationSphere = addSphereAtLocation(
+    36.12125, 
+    -115.16205, 
+    640, 
+    82.5, 
+    '/assets/emojidemo.mp4'
+  );
+  
+  // Add a click handler to the document to help with video autoplay
+  document.addEventListener('click', () => {
+    if (videoElement && videoElement.paused) {
+      videoElement.play().catch(e => console.error("Error playing video on click:", e));
+    }
+  });
 }
 
 function onWindowResize() {
@@ -490,6 +548,18 @@ function animate() {
     const baseScale = 1.0;
     const distanceScale = Math.max(1.0, distance / 100000);
     locationSphere.scale.set(distanceScale, distanceScale, distanceScale);
+    
+    // Update the video texture if it exists
+    if (videoTexture) {
+      videoTexture.needsUpdate = true;
+      
+      // If video is paused, try to play it
+      if (videoElement && videoElement.paused) {
+        videoElement.play().catch(e => {
+          // Silent catch - we'll try again on next frame
+        });
+      }
+    }
   }
 
   renderer.render(scene, camera);
