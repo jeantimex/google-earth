@@ -224,7 +224,7 @@ function reinstantiateTiles() {
   tiles = new TilesRenderer();
   tiles.registerPlugin(
     new GoogleCloudAuthPlugin({
-      apiToken: import.meta.env.VITE_GOOGLE_MAPS_JS_API_KEY,
+      apiToken: window.ENV?.VITE_GOOGLE_MAPS_JS_API_KEY || import.meta.env.VITE_GOOGLE_MAPS_JS_API_KEY,
       autoRefreshToken: true,
     })
   );
@@ -235,7 +235,7 @@ function reinstantiateTiles() {
   tiles.registerPlugin(
     new GLTFExtensionsPlugin({
       // Using local files from public directory for DRACO decoder
-      dracoLoader: new DRACOLoader().setDecoderPath("/draco/"),
+      dracoLoader: new DRACOLoader().setDecoderPath("./draco/"),
     })
   );
 
