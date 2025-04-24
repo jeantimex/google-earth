@@ -80,6 +80,17 @@ function addSphereAtLocation(lat, lon, altitude, radius, color) {
   // Apply the tiles matrix world transformation
   wireframeSphere.position.applyMatrix4(tiles.group.matrixWorld);
   
+  // Align the sphere with the Earth's surface at this location
+  // Calculate the normal vector at this position (pointing away from Earth center)
+  const normalVector = wireframeSphere.position.clone().normalize();
+  
+  // Create a rotation matrix to align the sphere with the surface
+  // This makes the sphere's "up" direction align with the normal vector
+  wireframeSphere.lookAt(0, 0, 0);
+  
+  // Rotate the sphere by 90 degrees around its local X axis
+  wireframeSphere.rotateX(Math.PI / 2);
+  
   // Add the sphere to the scene
   scene.add(wireframeSphere);
   
@@ -473,9 +484,6 @@ function animate() {
   if (locationSphere) {
     // Make the sphere always visible
     locationSphere.visible = true;
-    
-    // Make the sphere always face the camera
-    locationSphere.lookAt(camera.position);
     
     // Scale the sphere based on distance to maintain visual size
     const distance = camera.position.distanceTo(locationSphere.position);
