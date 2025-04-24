@@ -24,7 +24,8 @@ import {
   SphereGeometry,
   MeshBasicMaterial,
   Mesh,
-  Color
+  Color,
+  DoubleSide
 } from "three";
 import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
 import { GUI } from "three/examples/jsm/libs/lil-gui.module.min.js";
@@ -39,35 +40,50 @@ function addSphereAtLocation(lat, lon, altitude, radius, color) {
   // Skip if tiles aren't initialized
   if (!tiles) return null;
   
-  // Create sphere geometry and material
-  const geometry = new SphereGeometry(radius, 32, 32);
+  // Create sphere geometry with more segments for better grid appearance
+  const geometry = new SphereGeometry(radius, 48, 48);
   
-  // Use MeshBasicMaterial which doesn't require lighting and is always visible
-  const material = new MeshBasicMaterial({ 
+  // Create a wireframe material for the MSG Sphere look
+  const wireframeMaterial = new MeshBasicMaterial({ 
     color: new Color(color),
-    transparent: true,
-    opacity: 0.7,
-    wireframe: false
+    wireframe: true,
+    wireframeLinewidth: 2
   });
   
-  // Create the mesh
-  const sphere = new Mesh(geometry, material);
+  // Create a solid material for the base
+  const solidMaterial = new MeshBasicMaterial({ 
+    color: new Color('#000000'),  // Black base
+    transparent: false,
+    opacity: 1.0,
+    wireframe: false,
+    side: DoubleSide
+  });
+  
+  // Create the main sphere mesh with wireframe
+  const wireframeSphere = new Mesh(geometry, wireframeMaterial);
+  
+  // Create a slightly smaller solid sphere inside
+  const innerGeometry = new SphereGeometry(radius * 0.98, 48, 48);
+  const innerSphere = new Mesh(innerGeometry, solidMaterial);
+  
+  // Add the inner sphere as a child of the wireframe sphere
+  wireframeSphere.add(innerSphere);
   
   // Position the sphere at the geographic coordinates
   WGS84_ELLIPSOID.getCartographicToPosition(
     lat * MathUtils.DEG2RAD,
     lon * MathUtils.DEG2RAD,
     altitude,
-    sphere.position
+    wireframeSphere.position
   );
   
   // Apply the tiles matrix world transformation
-  sphere.position.applyMatrix4(tiles.group.matrixWorld);
+  wireframeSphere.position.applyMatrix4(tiles.group.matrixWorld);
   
   // Add the sphere to the scene
-  scene.add(sphere);
+  scene.add(wireframeSphere);
   
-  return sphere;
+  return wireframeSphere;
 }
 
 const params = {
