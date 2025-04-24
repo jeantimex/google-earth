@@ -21,6 +21,10 @@ import {
   PerspectiveCamera,
   MathUtils,
   OrthographicCamera,
+  SphereGeometry,
+  MeshBasicMaterial,
+  Mesh,
+  Color
 } from "three";
 import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
 import { GUI } from "three/examples/jsm/libs/lil-gui.module.min.js";
@@ -28,6 +32,43 @@ import Stats from "three/examples/jsm/libs/stats.module.js";
 
 let controls, scene, renderer, tiles, transition;
 let statsContainer, stats;
+let locationSphere; // Reference to the location sphere
+
+// Add a function to create a sphere at geographic coordinates
+function addSphereAtLocation(lat, lon, altitude, radius, color) {
+  // Skip if tiles aren't initialized
+  if (!tiles) return null;
+  
+  // Create sphere geometry and material
+  const geometry = new SphereGeometry(radius, 32, 32);
+  
+  // Use MeshBasicMaterial which doesn't require lighting and is always visible
+  const material = new MeshBasicMaterial({ 
+    color: new Color(color),
+    transparent: true,
+    opacity: 0.7,
+    wireframe: false
+  });
+  
+  // Create the mesh
+  const sphere = new Mesh(geometry, material);
+  
+  // Position the sphere at the geographic coordinates
+  WGS84_ELLIPSOID.getCartographicToPosition(
+    lat * MathUtils.DEG2RAD,
+    lon * MathUtils.DEG2RAD,
+    altitude,
+    sphere.position
+  );
+  
+  // Apply the tiles matrix world transformation
+  sphere.position.applyMatrix4(tiles.group.matrixWorld);
+  
+  // Add the sphere to the scene
+  scene.add(sphere);
+  
+  return sphere;
+}
 
 const params = {
   orthographic: false,
@@ -77,10 +118,16 @@ animate();
   
   // Only set default location if lat and lon are not already in the URL
   if (!urlParams.has("lat") && !urlParams.has("lon")) {
+    // Format numbers to remove trailing zeros
+    const formatNumber = (num) => {
+      // Use parseFloat to convert the number to a string without trailing zeros
+      return Number.parseFloat(num).toString();
+    };
+    
     // Use the default values from params
-    urlParams.set("lat", params.latitude.toFixed(4));
-    urlParams.set("lon", params.longitude.toFixed(4));
-    urlParams.set("height", params.altitude.toFixed(2));
+    urlParams.set("lat", formatNumber(params.latitude));
+    urlParams.set("lon", formatNumber(params.longitude));
+    urlParams.set("height", formatNumber(params.altitude));
     
     // Preserve other parameters
     if (params.useBatchedMesh) {
@@ -252,6 +299,9 @@ function init() {
   // run hash functions
   initFromHash();
   setInterval(updateHash, 100);
+
+  // Add a blue sphere at Las Vegas coordinates - make it much larger (20km radius) and elevated
+  locationSphere = addSphereAtLocation(36.12125, -115.16205, 640, 82.5, '#00AAFF');
 }
 
 function onWindowResize() {
@@ -403,8 +453,28 @@ function animate() {
   tiles.errorTarget = params.errorTarget;
   tiles.update();
 
+  // If we have a location sphere, update its visibility based on distance
+  if (locationSphere) {
+    // Make the sphere always visible
+    locationSphere.visible = true;
+    
+    // Make the sphere always face the camera
+    locationSphere.lookAt(camera.position);
+    
+    // Scale the sphere based on distance to maintain visual size
+    const distance = camera.position.distanceTo(locationSphere.position);
+    const baseScale = 1.0;
+    const distanceScale = Math.max(1.0, distance / 100000);
+    locationSphere.scale.set(distanceScale, distanceScale, distanceScale);
+  }
+
   renderer.render(scene, camera);
   stats.update();
+
+  // Only update hash when controls are being used, not during programmatic changes
+  if (controls.enabled && !params.skipNextHashUpdate) {
+    updateHash();
+  }
 
   updateHtml();
 }
