@@ -235,7 +235,7 @@ function reinstantiateTiles() {
   tiles.registerPlugin(
     new GLTFExtensionsPlugin({
       // Using local files from public directory for DRACO decoder
-      dracoLoader: new DRACOLoader().setDecoderPath("/draco/"),
+      dracoLoader: new DRACOLoader().setDecoderPath("draco/"),
     })
   );
 
