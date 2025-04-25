@@ -430,3 +430,7 @@ export class Atmosphere {
     this.material.uniforms.sphere_visible.value = this.sphereVisible;
   }
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+  new Atmosphere(document.body);
+});
