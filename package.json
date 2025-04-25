@@ -19,6 +19,6 @@
   "dependencies": {
     "3d-tiles-renderer": "^0.4.8",
     "stats.js": "^0.17.0",
-    "three": "^0.174.0"
+    "three": "^0.175.0"
   }
 }
