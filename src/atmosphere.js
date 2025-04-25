@@ -3,9 +3,6 @@
 import * as THREE from "three";
 import { vertexShader } from "./shaders/vertex";
 import { fragmentShader } from "./shaders/fragment";
-import { KeyboardManager } from "./controls/keyboard_manager";
-import { TouchManager } from "./controls/touch_manager";
-import { PointerManager } from "./controls/pointer_manager";
 
 /**
  * Constants for atmospheric scattering textures
@@ -278,15 +275,6 @@ export class Atmosphere {
    * Set up event listeners for window resize and keyboard controls
    */
   setupEventListeners() {
-    // Initialize keyboard controls manager
-    this.keyboardManager = new KeyboardManager(this);
-
-    // Initialize touch controls manager
-    this.touchManager = new TouchManager(this);
-
-    // Initialize pointer controls manager
-    this.pointerManager = new PointerManager(this);
-
     // Use both resize event and ResizeObserver for better responsiveness
     window.addEventListener("resize", this.onWindowResize.bind(this));
 
