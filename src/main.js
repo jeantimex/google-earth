@@ -72,6 +72,7 @@ const params = {
   routeAltitudeOffset: 37,
   routeMarkerAltitudeOffset: 41,
   routeMarkerRadius: 14,
+  firstPerson: false,
   goToLocation: () => {
     const { latitude, longitude, altitude } = params;
     const urlParams = new URLSearchParams();
@@ -253,6 +254,15 @@ function init() {
 
   const routeFolder = gui.addFolder("Route Controls");
   routeControls.setup(routeFolder);
+  routeFolder.add(params, "firstPerson").name("First Person").onChange((value) => {
+    if (value && transition.camera.isOrthographicCamera) {
+      params.orthographic = false;
+      if (!transition.animating) {
+        transition.syncCameras();
+      }
+      transition.toggle();
+    }
+  });
   routeFolder
     .add(params, "routeAltitudeOffset", 0, 500, 1)
     .name("Altitude Offset")
@@ -575,9 +585,12 @@ function animate() {
     return;
   }
 
-  controls.enabled = !transition.animating;
+  const deltaSeconds = clock.getDelta();
+
+  controls.enabled = !transition.animating && !params.firstPerson;
   controls.update();
   transition.update();
+  routeVisualization.update(deltaSeconds);
 
   const camera = transition.camera;
   tiles.setResolutionFromRenderer(camera, renderer);
@@ -587,11 +600,36 @@ function animate() {
   tiles.errorTarget = params.errorTarget;
   tiles.update();
 
+  if (params.firstPerson) {
+    applyFirstPersonCamera(camera);
+  }
+
   renderer.render(scene, camera);
-  routeVisualization.update(clock.getDelta());
   stats.update();
 
   updateHtml();
+}
+
+function applyFirstPersonCamera(camera) {
+  const pose = routeVisualization.getFirstPersonPose();
+  if (!pose || !camera.isPerspectiveCamera) {
+    return;
+  }
+
+  const eyeHeight = 3;
+  const forwardLook = 30;
+  const seatOffset = 2;
+  const position = pose.position
+    .clone()
+    .addScaledVector(pose.up, eyeHeight)
+    .addScaledVector(pose.forward, seatOffset);
+  const lookAt = position.clone().addScaledVector(pose.forward, forwardLook);
+
+  camera.position.copy(position);
+  camera.up.copy(pose.up);
+  camera.lookAt(lookAt);
+  camera.updateMatrixWorld();
+  controls.adjustCamera(camera);
 }
 
 function updateHtml() {

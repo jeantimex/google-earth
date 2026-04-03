@@ -30,6 +30,7 @@ export function createRouteVisualization() {
   let primaryRouteMarkerPoints = [];
   let carMesh = null;
   let animationState = null;
+  let firstPersonPose = null;
   const zAxis = new Vector3(0, 0, 1);
   const routeTangent = new Vector3();
   const routeNormal = new Vector3();
@@ -54,6 +55,7 @@ export function createRouteVisualization() {
     primaryRouteMarkerPoints = [];
     animationState = null;
     carMesh = null;
+    firstPersonPose = null;
 
     if (activeTilesGroup?.parent) {
       activeTilesGroup.parent.add(routeGroup);
@@ -155,6 +157,7 @@ export function createRouteVisualization() {
     animationState = null;
     primaryRouteMarkerPoints = [];
     carMesh = null;
+    firstPersonPose = null;
     routeGroup.children.forEach((child) => {
       child.geometry?.dispose?.();
       if (Array.isArray(child.material)) {
@@ -332,6 +335,12 @@ export function createRouteVisualization() {
     routeMatrix.makeBasis(routeTangent, routeBinormal, routeNormal);
     carMesh.position.copy(position);
     carMesh.quaternion.setFromRotationMatrix(routeMatrix);
+    firstPersonPose = {
+      position: position.clone(),
+      forward: routeTangent.clone(),
+      up: routeNormal.clone(),
+      right: routeBinormal.clone(),
+    };
   }
 
   function toggleAnimation() {
@@ -374,6 +383,7 @@ export function createRouteVisualization() {
     toggleAnimation,
     stopAnimation,
     update,
+    getFirstPersonPose: () => firstPersonPose,
     setAltitudeOffset,
     setMarkerAltitudeOffset,
     setMarkerRadius,
