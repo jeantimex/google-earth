@@ -73,6 +73,7 @@ const params = {
   routeMarkerAltitudeOffset: 41,
   routeMarkerRadius: 14,
   firstPerson: false,
+  followObject: false,
   goToLocation: () => {
     const { latitude, longitude, altitude } = params;
     const urlParams = new URLSearchParams();
@@ -261,6 +262,14 @@ function init() {
         transition.syncCameras();
       }
       transition.toggle();
+    }
+    if (value) {
+      prevCarPosition = null;
+    }
+  });
+  routeFolder.add(params, "followObject").name("Follow Object").onChange((value) => {
+    if (!value) {
+      prevCarPosition = null;
     }
   });
   routeFolder
@@ -602,12 +611,40 @@ function animate() {
 
   if (params.firstPerson) {
     applyFirstPersonCamera(camera);
+  } else if (params.followObject) {
+    applyFollowObject(camera);
   }
 
   renderer.render(scene, camera);
   stats.update();
 
   updateHtml();
+}
+
+let prevCarPosition = null;
+
+function applyFollowObject(camera) {
+  const carPos = routeVisualization.getCarPosition();
+  if (!carPos) {
+    prevCarPosition = null;
+    return;
+  }
+
+  if (prevCarPosition) {
+    const delta = new Vector3().subVectors(carPos, prevCarPosition);
+    if (delta.lengthSq() > 1e-10) {
+      camera.position.add(delta);
+      camera.updateMatrixWorld();
+      controls.adjustCamera(camera);
+      if (!transition.animating) {
+        transition.syncCameras();
+        controls.adjustCamera(transition.perspectiveCamera);
+        controls.adjustCamera(transition.orthographicCamera);
+      }
+    }
+  }
+
+  prevCarPosition = carPos.clone();
 }
 
 function applyFirstPersonCamera(camera) {

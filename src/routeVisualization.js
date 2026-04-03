@@ -366,6 +366,12 @@ export function createRouteVisualization() {
     updateCarTransform();
   }
 
+  function getCarPosition() {
+    if (!carMesh || !animationState || animationState.paused) return null;
+    if (animationState.distance >= animationState.totalDistance) return null;
+    return carMesh.position;
+  }
+
   return {
     attachToTilesGroup,
     render,
@@ -375,6 +381,7 @@ export function createRouteVisualization() {
     stopAnimation,
     update,
     getFirstPersonPose: () => firstPersonPose,
+    getCarPosition,
     setAltitudeOffset,
     setMarkerAltitudeOffset,
     setMarkerRadius,
