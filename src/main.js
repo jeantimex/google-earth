@@ -74,6 +74,7 @@ const params = {
   routeMarkerRadius: 14,
   firstPerson: false,
   followObject: false,
+  lookAtObject: false,
   goToLocation: () => {
     const { latitude, longitude, altitude } = params;
     const urlParams = new URLSearchParams();
@@ -272,6 +273,7 @@ function init() {
       prevCarPosition = null;
     }
   });
+  routeFolder.add(params, "lookAtObject").name("Look at Object");
   routeFolder
     .add(params, "routeAltitudeOffset", 0, 500, 1)
     .name("Altitude Offset")
@@ -613,6 +615,9 @@ function animate() {
     applyFirstPersonCamera(camera);
   } else if (params.followObject) {
     applyFollowObject(camera);
+    if (params.lookAtObject) {
+      applyLookAtObject(camera);
+    }
   }
 
   renderer.render(scene, camera);
@@ -645,6 +650,28 @@ function applyFollowObject(camera) {
   }
 
   prevCarPosition = carPos.clone();
+}
+
+function applyLookAtObject(camera) {
+  const carPos = routeVisualization.getCarPosition();
+  if (!carPos || !camera.isPerspectiveCamera) return;
+
+  const savedQuat = camera.quaternion.clone();
+
+  camera.up.copy(camera.position).normalize();
+  camera.lookAt(carPos);
+
+  const targetQuat = camera.quaternion.clone();
+  camera.quaternion.copy(savedQuat).slerp(targetQuat, 0.05);
+
+  camera.updateMatrixWorld();
+  controls.adjustCamera(camera);
+
+  if (!transition.animating) {
+    transition.syncCameras();
+    controls.adjustCamera(transition.perspectiveCamera);
+    controls.adjustCamera(transition.orthographicCamera);
+  }
 }
 
 function applyFirstPersonCamera(camera) {
