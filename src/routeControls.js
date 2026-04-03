@@ -11,35 +11,67 @@ function createAutocompleteState() {
   };
 }
 
-export function createRouteControls({ getMapsLibraries }) {
+export function createRouteControls({ getMapsLibraries, onRoutesComputed }) {
   const routeParams = {
     origin: "",
     destination: "",
     showRoutes: async () => {
-      try {
-        const { Route } = await getMapsLibraries();
-        const origin = getRouteEndpoint("origin");
-        const destination = getRouteEndpoint("destination");
-
-        if (!origin || !destination) {
-          console.warn("Both Origin and Destination are required.");
-          return;
-        }
-
-        const response = await Route.computeRoutes({
-          origin,
-          destination,
-          travelMode: "DRIVING",
-          computeAlternativeRoutes: true,
-          fields: ["path", "legs", "distanceMeters", "durationMillis"],
-        });
-
-        console.log("Route.computeRoutes response", response);
-      } catch (error) {
-        console.error("Failed to compute routes.", error);
-      }
+      await computeAndEmitRoutes("DRIVING");
+    },
+    showTransits: async () => {
+      await computeAndEmitRoutes("TRANSIT");
     },
   };
+
+  async function computeAndEmitRoutes(travelMode) {
+    try {
+      const { Route } = await getMapsLibraries();
+      const origin = getRouteEndpoint("origin");
+      const destination = getRouteEndpoint("destination");
+
+      if (!origin || !destination) {
+        console.warn("Both Origin and Destination are required.");
+        return;
+      }
+
+      const request = {
+        origin,
+        destination,
+        travelMode,
+        computeAlternativeRoutes: true,
+        ...(travelMode === "TRANSIT"
+          ? {
+              departureTime: new Date(Date.now() + 30 * 60 * 1000),
+              transitPreference: {
+                allowedTransitModes: [
+                  "BUS",
+                  "SUBWAY",
+                  "TRAIN",
+                  "LIGHT_RAIL",
+                  "RAIL",
+                ],
+                routingPreference: "FEWER_TRANSFERS",
+              },
+            }
+          : {}),
+        fields:
+          travelMode === "TRANSIT"
+            ? ["path", "legs", "travelAdvisory", "localizedValues"]
+            : ["path", "legs", "distanceMeters", "durationMillis"],
+      };
+
+      if (travelMode === "TRANSIT") {
+        console.log("Transit route request", request);
+      }
+
+      const response = await Route.computeRoutes(request);
+
+      console.log(`Route.computeRoutes response [${travelMode}]`, response);
+      await onRoutesComputed?.(response);
+    } catch (error) {
+      console.error(`Failed to compute ${travelMode.toLowerCase()} routes.`, error);
+    }
+  }
 
   const routeAutocompleteState = {
     origin: createAutocompleteState(),
@@ -61,6 +93,7 @@ export function createRouteControls({ getMapsLibraries }) {
     bindAutocompleteController(destinationController, "destination");
 
     folder.add(routeParams, "showRoutes").name("Show Routes");
+    folder.add(routeParams, "showTransits").name("Show Transits");
   }
 
   function preload() {

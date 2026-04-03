@@ -16,22 +16,35 @@ import {
   GoogleCloudAuthPlugin,
 } from "3d-tiles-renderer/plugins";
 import {
+  Box3,
   Scene,
   WebGLRenderer,
   PerspectiveCamera,
   MathUtils,
   OrthographicCamera,
+  Vector3,
 } from "three";
 import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
 import { GUI } from "three/examples/jsm/libs/lil-gui.module.min.js";
 import Stats from "three/examples/jsm/libs/stats.module.js";
 import { getMapsLibraries } from "./googleMaps.js";
 import { createRouteControls } from "./routeControls.js";
+import { createRouteVisualization } from "./routeVisualization.js";
 
 let controls, scene, renderer, tiles, transition;
 let statsContainer, stats;
+const routeVisualization = createRouteVisualization();
 
-const routeControls = createRouteControls({ getMapsLibraries });
+const routeControls = createRouteControls({
+  getMapsLibraries,
+  onRoutesComputed: async (response) => {
+    const elevatedResponse = await applyElevationToRoute(response);
+    const renderResult = routeVisualization.render(elevatedResponse);
+    if (renderResult) {
+      fitCameraToRoute(renderResult);
+    }
+  },
+});
 
 const params = {
   orthographic: false,
@@ -45,6 +58,9 @@ const params = {
   longitude: 0,
   altitude: 9000000,
   autoUpdate: true,
+  routeAltitudeOffset: 37,
+  routeMarkerAltitudeOffset: 41,
+  routeMarkerRadius: 14,
   goToLocation: () => {
     const { latitude, longitude, altitude } = params;
     const urlParams = new URLSearchParams();
@@ -121,6 +137,7 @@ function reinstantiateTiles() {
 
   tiles.group.rotation.x = -Math.PI / 2;
   scene.add(tiles.group);
+  routeVisualization.attachToTilesGroup(tiles.group);
 
   tiles.setResolutionFromRenderer(transition.camera, renderer);
   tiles.setCamera(transition.camera);
@@ -163,6 +180,11 @@ function init() {
   controls.enableDamping = true;
 
   reinstantiateTiles();
+  routeVisualization.setAltitudeOffset(params.routeAltitudeOffset);
+  routeVisualization.setMarkerAltitudeOffset(
+    params.routeMarkerAltitudeOffset - params.routeAltitudeOffset
+  );
+  routeVisualization.setMarkerRadius(params.routeMarkerRadius);
 
   onWindowResize();
   window.addEventListener("resize", onWindowResize, false);
@@ -220,6 +242,29 @@ function init() {
 
   const routeFolder = gui.addFolder("Route Controls");
   routeControls.setup(routeFolder);
+  routeFolder
+    .add(params, "routeAltitudeOffset", 0, 500, 1)
+    .name("Altitude Offset")
+    .onChange((value) => {
+      routeVisualization.setAltitudeOffset(value);
+      routeVisualization.setMarkerAltitudeOffset(
+        params.routeMarkerAltitudeOffset - value
+      );
+    });
+  routeFolder
+    .add(params, "routeMarkerAltitudeOffset", 0, 500, 1)
+    .name("Marker Altitude")
+    .onChange((value) => {
+      routeVisualization.setMarkerAltitudeOffset(
+        value - params.routeAltitudeOffset
+      );
+    });
+  routeFolder
+    .add(params, "routeMarkerRadius", 1, 100, 1)
+    .name("Marker Radius")
+    .onChange((value) => {
+      routeVisualization.setMarkerRadius(value);
+    });
 
   const exampleOptions = gui.addFolder("Example Options");
   exampleOptions.add(params, "enableCacheDisplay");
@@ -256,6 +301,155 @@ function onWindowResize() {
 
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(window.devicePixelRatio);
+  routeVisualization.setResolution(window.innerWidth, window.innerHeight);
+}
+
+function fitCameraToRoute({ points, bounds }) {
+  const camera = transition.camera;
+  if (!bounds || !points || points.length === 0) {
+    return;
+  }
+
+  const routeCenter = bounds.center.clone();
+  const routeNormal = routeCenter.clone().normalize();
+  const radius = Math.max(bounds.radius, 250);
+  const padding = 1.35;
+
+  if (camera.isPerspectiveCamera) {
+    const fitDistance = getPerspectiveFitDistance(camera, radius * padding);
+    camera.position.copy(routeCenter).addScaledVector(routeNormal, fitDistance);
+    camera.lookAt(routeCenter);
+  } else if (camera.isOrthographicCamera) {
+    const fitDistance = routeCenter.length() + radius * padding * 4;
+    camera.position.copy(routeCenter).addScaledVector(routeNormal, fitDistance);
+    camera.lookAt(routeCenter);
+
+    const box = new Box3().setFromPoints(points);
+    const size = box.getSize(new Vector3());
+    const requiredHeight = Math.max(size.y, size.x / camera.aspect) * padding;
+    const baseHeight = Math.abs(camera.top - camera.bottom);
+    camera.zoom = Math.max(baseHeight / requiredHeight, controls.minZoom);
+    camera.updateProjectionMatrix();
+  }
+
+  camera.updateMatrixWorld();
+  controls.adjustCamera(camera);
+
+  if (!transition.animating) {
+    transition.syncCameras();
+    controls.adjustCamera(transition.perspectiveCamera);
+    controls.adjustCamera(transition.orthographicCamera);
+  }
+}
+
+function getPerspectiveFitDistance(camera, radius) {
+  const verticalFov = MathUtils.degToRad(camera.fov);
+  const horizontalFov =
+    2 * Math.atan(Math.tan(verticalFov / 2) * camera.aspect);
+  const limitingFov = Math.min(verticalFov, horizontalFov);
+
+  return radius / Math.sin(limitingFov / 2);
+}
+
+async function applyElevationToRoute(response) {
+  const routes = response?.routes?.filter(
+    (route) => Array.isArray(route.path) && route.path.length > 0
+  );
+  if (!routes?.length) {
+    return response;
+  }
+
+  try {
+    const { ElevationService } = await getMapsLibraries();
+    const elevationService = new ElevationService();
+    const elevatedRoutes = await Promise.all(
+      response.routes.map(async (route, routeIndex) => {
+        if (!Array.isArray(route.path) || route.path.length === 0) {
+          return route;
+        }
+
+        const elevatedPath = await elevatePath(route.path, elevationService);
+
+        console.log(`Elevated route polyline points [route ${routeIndex}]`);
+        elevatedPath.forEach((point, index) => {
+          console.log(
+            `[${index}] lat=${point.lat}, lng=${point.lng}, altitude=${point.altitude}`
+          );
+        });
+
+        return {
+          ...route,
+          path: elevatedPath,
+          legs: route.legs,
+        };
+      })
+    );
+
+    for (const route of elevatedRoutes) {
+      if (!route.legs) {
+        continue;
+      }
+
+      route.legs = await Promise.all(
+        route.legs.map(async (leg) => {
+          if (!leg.steps) {
+            return leg;
+          }
+
+          const steps = await Promise.all(
+            leg.steps.map(async (step) => {
+              if (!Array.isArray(step.path) || step.path.length === 0) {
+                return step;
+              }
+
+              return {
+                ...step,
+                path: await elevatePath(step.path, elevationService),
+              };
+            })
+          );
+
+          return {
+            ...leg,
+            steps,
+          };
+        })
+      );
+    }
+
+    return {
+      ...response,
+      routes: elevatedRoutes,
+    };
+  } catch (error) {
+    console.warn("Failed to fetch route elevations. Rendering without terrain heights.", error);
+    return response;
+  }
+}
+
+async function elevatePath(path, elevationService) {
+  const locations = path.map((point) => ({
+    lat: getRoutePointValue(point, "lat"),
+    lng: getRoutePointValue(point, "lng"),
+  }));
+
+  const elevationResponse = await elevationService.getElevationForLocations({
+    locations,
+  });
+
+  return path.map((point, index) => ({
+    lat: getRoutePointValue(point, "lat"),
+    lng: getRoutePointValue(point, "lng"),
+    altitude: elevationResponse.results[index]?.elevation ?? 0,
+  }));
+}
+
+function getRoutePointValue(point, key) {
+  const value = point?.[key];
+  if (typeof value === "function") {
+    return value.call(point);
+  }
+  return value;
 }
 
 function updateHash() {

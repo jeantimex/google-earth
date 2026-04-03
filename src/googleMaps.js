@@ -24,13 +24,22 @@ export function getMapsLibraries() {
     mapsLibrariesPromise = Promise.resolve().then(async () => {
       configureGoogleMapsLoader();
 
-      const [{ AutocompleteSuggestion, AutocompleteSessionToken }, { Route }] =
-        await Promise.all([
+      const [
+        { AutocompleteSuggestion, AutocompleteSessionToken },
+        { Route },
+        { ElevationService },
+      ] = await Promise.all([
           importLibrary("places"),
           importLibrary("routes"),
+          importLibrary("elevation"),
         ]);
 
-      return { AutocompleteSuggestion, AutocompleteSessionToken, Route };
+      return {
+        AutocompleteSuggestion,
+        AutocompleteSessionToken,
+        Route,
+        ElevationService,
+      };
     });
   }
 
