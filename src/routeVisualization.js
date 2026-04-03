@@ -2,6 +2,7 @@ import { WGS84_ELLIPSOID } from "3d-tiles-renderer";
 import {
   Box3,
   BoxGeometry,
+  CatmullRomCurve3,
   CircleGeometry,
   Color,
   Group,
@@ -36,6 +37,7 @@ export function createRouteVisualization() {
   const routeNormal = new Vector3();
   const routeBinormal = new Vector3();
   const routeMatrix = new Matrix4();
+  const targetQuaternion = new Quaternion();
   const routeColors = [
     new Color(0x1d4ed8),
     new Color(0x60a5fa),
@@ -175,21 +177,17 @@ export function createRouteVisualization() {
       return;
     }
 
-    const segmentLengths = [];
-    let totalDistance = 0;
-
-    for (let i = 0; i < primaryRouteMarkerPoints.length - 1; i += 1) {
-      const length = primaryRouteMarkerPoints[i].distanceTo(
-        primaryRouteMarkerPoints[i + 1]
-      );
-      segmentLengths.push(length);
-      totalDistance += length;
-    }
+    const curve = new CatmullRomCurve3(
+      primaryRouteMarkerPoints.map((point) => point.clone()),
+      false,
+      "centripetal"
+    );
+    const totalDistance = curve.getLength();
 
     animationState = {
       distance: 0,
       speed: 30,
-      segmentLengths,
+      curve,
       totalDistance,
       paused: false,
     };
@@ -307,34 +305,27 @@ export function createRouteVisualization() {
       return;
     }
 
-    let remainingDistance = state.distance;
-    let segmentIndex = 0;
+    const progress = Math.min(
+      state.distance / Math.max(state.totalDistance, 1e-6),
+      1
+    );
+    const lookAheadDistance = Math.min(18, state.totalDistance * 0.05);
+    const lookAheadProgress = Math.min(
+      (state.distance + lookAheadDistance) / Math.max(state.totalDistance, 1e-6),
+      1
+    );
+    const position = state.curve.getPointAt(progress);
+    const lookAhead = state.curve.getPointAt(lookAheadProgress);
 
-    while (
-      segmentIndex < state.segmentLengths.length - 1 &&
-      remainingDistance > state.segmentLengths[segmentIndex]
-    ) {
-      remainingDistance -= state.segmentLengths[segmentIndex];
-      segmentIndex += 1;
-    }
-
-    const start = primaryRouteMarkerPoints[segmentIndex];
-    const end =
-      primaryRouteMarkerPoints[
-        Math.min(segmentIndex + 1, primaryRouteMarkerPoints.length - 1)
-      ];
-    const segmentLength = Math.max(state.segmentLengths[segmentIndex], 1e-6);
-    const alpha = Math.min(remainingDistance / segmentLength, 1);
-    const position = start.clone().lerp(end, alpha);
-
-    routeTangent.subVectors(end, start).normalize();
+    routeTangent.subVectors(lookAhead, position).normalize();
     routeNormal.copy(position).normalize();
     routeBinormal.crossVectors(routeNormal, routeTangent).normalize();
     routeTangent.crossVectors(routeBinormal, routeNormal).normalize();
 
     routeMatrix.makeBasis(routeTangent, routeBinormal, routeNormal);
     carMesh.position.copy(position);
-    carMesh.quaternion.setFromRotationMatrix(routeMatrix);
+    targetQuaternion.setFromRotationMatrix(routeMatrix);
+    carMesh.quaternion.slerp(targetQuaternion, 0.18);
     firstPersonPose = {
       position: position.clone(),
       forward: routeTangent.clone(),
