@@ -44,6 +44,9 @@ const routeControls = createRouteControls({
       fitCameraToRoute(renderResult);
     }
   },
+  onClear: () => {
+    routeVisualization.clear();
+  },
 });
 
 const params = {

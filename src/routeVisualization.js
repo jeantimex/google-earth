@@ -134,6 +134,7 @@ export function createRouteVisualization() {
   }
 
   function clear() {
+    lastResponse = null;
     routeGroup.children.forEach((child) => {
       child.geometry?.dispose?.();
       if (Array.isArray(child.material)) {

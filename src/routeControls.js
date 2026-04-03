@@ -11,7 +11,11 @@ function createAutocompleteState() {
   };
 }
 
-export function createRouteControls({ getMapsLibraries, onRoutesComputed }) {
+export function createRouteControls({
+  getMapsLibraries,
+  onRoutesComputed,
+  onClear,
+}) {
   const routeParams = {
     origin: "",
     destination: "",
@@ -20,6 +24,10 @@ export function createRouteControls({ getMapsLibraries, onRoutesComputed }) {
     },
     showTransits: async () => {
       await computeAndEmitRoutes("TRANSIT");
+    },
+    clear: () => {
+      clearRouteInputs();
+      onClear?.();
     },
   };
 
@@ -94,6 +102,7 @@ export function createRouteControls({ getMapsLibraries, onRoutesComputed }) {
 
     folder.add(routeParams, "showRoutes").name("Show Routes");
     folder.add(routeParams, "showTransits").name("Show Transits");
+    folder.add(routeParams, "clear").name("Clear");
   }
 
   function preload() {
@@ -382,6 +391,26 @@ export function createRouteControls({ getMapsLibraries, onRoutesComputed }) {
     clearAutocompleteSuggestions(field);
     hideAutocompletePopup(field);
     state.input?.blur();
+  }
+
+  function clearRouteInputs() {
+    fields.forEach((field) => {
+      const state = routeAutocompleteState[field];
+      routeParams[field] = "";
+      state.selectedPlace = null;
+      state.suggestionsByLabel.clear();
+      state.requestId += 1;
+
+      if (state.debounceId) {
+        window.clearTimeout(state.debounceId);
+        state.debounceId = null;
+      }
+
+      endAutocompleteSession(field);
+      hideAutocompletePopup(field);
+      controllerUpdateDisplay(field);
+      state.input?.blur();
+    });
   }
 
   function closeAllAutocompletePopups(event) {
