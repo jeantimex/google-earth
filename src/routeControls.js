@@ -15,6 +15,8 @@ export function createRouteControls({
   getMapsLibraries,
   onRoutesComputed,
   onClear,
+  onToggleAnimation,
+  onStopAnimation,
 }) {
   const routeParams = {
     origin: "",
@@ -28,6 +30,12 @@ export function createRouteControls({
     clear: () => {
       clearRouteInputs();
       onClear?.();
+    },
+    startPauseRoutesAnimation: () => {
+      onToggleAnimation?.();
+    },
+    stopRoutesAnimation: () => {
+      onStopAnimation?.();
     },
   };
 
@@ -103,6 +111,10 @@ export function createRouteControls({
     folder.add(routeParams, "showRoutes").name("Show Routes");
     folder.add(routeParams, "showTransits").name("Show Transits");
     folder.add(routeParams, "clear").name("Clear");
+    folder
+      .add(routeParams, "startPauseRoutesAnimation")
+      .name("Start/Pause");
+    folder.add(routeParams, "stopRoutesAnimation").name("Stop");
   }
 
   function preload() {

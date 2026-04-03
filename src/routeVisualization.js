@@ -1,9 +1,11 @@
 import { WGS84_ELLIPSOID } from "3d-tiles-renderer";
 import {
   Box3,
+  BoxGeometry,
   CircleGeometry,
   Color,
   Group,
+  Matrix4,
   Mesh,
   MeshBasicMaterial,
   Quaternion,
@@ -25,7 +27,14 @@ export function createRouteVisualization() {
   let altitudeOffset = 0;
   let markerAltitudeOffset = 0;
   let markerRadius = 14;
+  let primaryRouteMarkerPoints = [];
+  let carMesh = null;
+  let animationState = null;
   const zAxis = new Vector3(0, 0, 1);
+  const routeTangent = new Vector3();
+  const routeNormal = new Vector3();
+  const routeBinormal = new Vector3();
+  const routeMatrix = new Matrix4();
   const routeColors = [
     new Color(0x1d4ed8),
     new Color(0x60a5fa),
@@ -42,6 +51,9 @@ export function createRouteVisualization() {
 
     routeGroup.removeFromParent();
     activeTilesGroup = tilesGroup;
+    primaryRouteMarkerPoints = [];
+    animationState = null;
+    carMesh = null;
 
     if (activeTilesGroup?.parent) {
       activeTilesGroup.parent.add(routeGroup);
@@ -68,6 +80,7 @@ export function createRouteVisualization() {
     }
 
     const allPoints = [];
+    primaryRouteMarkerPoints = [];
 
     routes.forEach((route, routeIndex) => {
       const routeColor = routeColors[routeIndex % routeColors.length];
@@ -108,6 +121,10 @@ export function createRouteVisualization() {
         )
       );
 
+      if (routeIndex === 0) {
+        primaryRouteMarkerPoints = markerPoints.map((point) => point.clone());
+      }
+
       const markerMaterial = new MeshBasicMaterial({
         color: routeColor,
         transparent: true,
@@ -135,6 +152,9 @@ export function createRouteVisualization() {
 
   function clear() {
     lastResponse = null;
+    animationState = null;
+    primaryRouteMarkerPoints = [];
+    carMesh = null;
     routeGroup.children.forEach((child) => {
       child.geometry?.dispose?.();
       if (Array.isArray(child.material)) {
@@ -144,6 +164,59 @@ export function createRouteVisualization() {
       }
     });
     routeGroup.clear();
+  }
+
+  function startAnimation() {
+    if (primaryRouteMarkerPoints.length < 2) {
+      console.warn("No primary route available to animate.");
+      return;
+    }
+
+    const segmentLengths = [];
+    let totalDistance = 0;
+
+    for (let i = 0; i < primaryRouteMarkerPoints.length - 1; i += 1) {
+      const length = primaryRouteMarkerPoints[i].distanceTo(
+        primaryRouteMarkerPoints[i + 1]
+      );
+      segmentLengths.push(length);
+      totalDistance += length;
+    }
+
+    animationState = {
+      distance: 0,
+      speed: 30,
+      segmentLengths,
+      totalDistance,
+      paused: false,
+    };
+
+    if (!carMesh) {
+      carMesh = new Mesh(
+        new BoxGeometry(22, 12, 8),
+        new MeshBasicMaterial({ color: 0xffffff })
+      );
+      routeGroup.add(carMesh);
+    }
+
+    updateCarTransform();
+  }
+
+  function update(deltaSeconds) {
+    if (!animationState || !carMesh || animationState.paused) {
+      return;
+    }
+
+    animationState.distance = Math.min(
+      animationState.distance + animationState.speed * deltaSeconds,
+      animationState.totalDistance
+    );
+
+    updateCarTransform();
+
+    if (animationState.distance >= animationState.totalDistance) {
+      animationState.paused = true;
+    }
   }
 
   function setResolution(width, height) {
@@ -225,10 +298,82 @@ export function createRouteVisualization() {
     ];
   }
 
+  function updateCarTransform() {
+    const state = animationState;
+    if (!state || !carMesh || primaryRouteMarkerPoints.length < 2) {
+      return;
+    }
+
+    let remainingDistance = state.distance;
+    let segmentIndex = 0;
+
+    while (
+      segmentIndex < state.segmentLengths.length - 1 &&
+      remainingDistance > state.segmentLengths[segmentIndex]
+    ) {
+      remainingDistance -= state.segmentLengths[segmentIndex];
+      segmentIndex += 1;
+    }
+
+    const start = primaryRouteMarkerPoints[segmentIndex];
+    const end =
+      primaryRouteMarkerPoints[
+        Math.min(segmentIndex + 1, primaryRouteMarkerPoints.length - 1)
+      ];
+    const segmentLength = Math.max(state.segmentLengths[segmentIndex], 1e-6);
+    const alpha = Math.min(remainingDistance / segmentLength, 1);
+    const position = start.clone().lerp(end, alpha);
+
+    routeTangent.subVectors(end, start).normalize();
+    routeNormal.copy(position).normalize();
+    routeBinormal.crossVectors(routeNormal, routeTangent).normalize();
+    routeTangent.crossVectors(routeBinormal, routeNormal).normalize();
+
+    routeMatrix.makeBasis(routeTangent, routeBinormal, routeNormal);
+    carMesh.position.copy(position);
+    carMesh.quaternion.setFromRotationMatrix(routeMatrix);
+  }
+
+  function toggleAnimation() {
+    if (!primaryRouteMarkerPoints.length) {
+      console.warn("No primary route available to animate.");
+      return;
+    }
+
+    if (!animationState) {
+      startAnimation();
+      return;
+    }
+
+    animationState.paused = !animationState.paused;
+  }
+
+  function stopAnimation() {
+    if (!animationState) {
+      if (carMesh) {
+        carMesh.visible = false;
+      }
+      return;
+    }
+
+    animationState.distance = 0;
+    animationState.paused = true;
+
+    if (carMesh) {
+      carMesh.visible = true;
+    }
+
+    updateCarTransform();
+  }
+
   return {
     attachToTilesGroup,
     render,
     clear,
+    startAnimation,
+    toggleAnimation,
+    stopAnimation,
+    update,
     setAltitudeOffset,
     setMarkerAltitudeOffset,
     setMarkerRadius,

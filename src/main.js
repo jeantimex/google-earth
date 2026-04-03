@@ -17,6 +17,7 @@ import {
 } from "3d-tiles-renderer/plugins";
 import {
   Box3,
+  Clock,
   Scene,
   WebGLRenderer,
   PerspectiveCamera,
@@ -34,6 +35,7 @@ import { createRouteVisualization } from "./routeVisualization.js";
 let controls, scene, renderer, tiles, transition;
 let statsContainer, stats;
 const routeVisualization = createRouteVisualization();
+const clock = new Clock();
 
 const routeControls = createRouteControls({
   getMapsLibraries,
@@ -46,6 +48,12 @@ const routeControls = createRouteControls({
   },
   onClear: () => {
     routeVisualization.clear();
+  },
+  onToggleAnimation: () => {
+    routeVisualization.toggleAnimation();
+  },
+  onStopAnimation: () => {
+    routeVisualization.stopAnimation();
   },
 });
 
@@ -580,6 +588,7 @@ function animate() {
   tiles.update();
 
   renderer.render(scene, camera);
+  routeVisualization.update(clock.getDelta());
   stats.update();
 
   updateHtml();
