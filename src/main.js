@@ -25,75 +25,65 @@ import {
 import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
 import { GUI } from "three/examples/jsm/libs/lil-gui.module.min.js";
 import Stats from "three/examples/jsm/libs/stats.module.js";
+import { getMapsLibraries } from "./googleMaps.js";
+import { createRouteControls } from "./routeControls.js";
 
 let controls, scene, renderer, tiles, transition;
 let statsContainer, stats;
 
+const routeControls = createRouteControls({ getMapsLibraries });
+
 const params = {
   orthographic: false,
-
   enableCacheDisplay: false,
   enableRendererStats: false,
   useBatchedMesh: Boolean(
     new URLSearchParams(window.location.hash.replace(/^#/, "")).get("batched")
   ),
   errorTarget: 40,
-
   latitude: 0,
   longitude: 0,
   altitude: 9000000,
   autoUpdate: true,
   goToLocation: () => {
     const { latitude, longitude, altitude } = params;
-    
-    // Create a new URL with the updated parameters
     const urlParams = new URLSearchParams();
+
     urlParams.set("lat", latitude.toFixed(4));
     urlParams.set("lon", longitude.toFixed(4));
     urlParams.set("height", altitude.toFixed(2));
-    
-    // Preserve other parameters
+
     if (params.useBatchedMesh) {
       urlParams.set("batched", 1);
     }
-    
-    // Update the hash without triggering the hashchange event
+
     window.history.replaceState(undefined, undefined, `#${urlParams}`);
-    
-    // Manually call initFromHash to update the camera position
     initFromHash();
   },
-
   reload: reinstantiateTiles,
 };
 
 init();
 animate();
+setInitialLocation();
 
-// Set initial location in URL if not already set
-(function setInitialLocation() {
+function setInitialLocation() {
   const hash = window.location.hash.replace(/^#/, "");
   const urlParams = new URLSearchParams(hash);
-  
-  // Only set default location if lat and lon are not already in the URL
+
   if (!urlParams.has("lat") && !urlParams.has("lon")) {
-    // Use the default values from params
     urlParams.set("lat", params.latitude.toFixed(4));
     urlParams.set("lon", params.longitude.toFixed(4));
     urlParams.set("height", params.altitude.toFixed(2));
-    
-    // Preserve other parameters
+
     if (params.useBatchedMesh) {
       urlParams.set("batched", 1);
     }
-    
-    // Update the URL hash
+
     window.history.replaceState(undefined, undefined, `#${urlParams}`);
-    
-    // Call initFromHash to position the camera
     initFromHash();
   }
-})();
+}
 
 function reinstantiateTiles() {
   if (tiles) {
@@ -115,7 +105,6 @@ function reinstantiateTiles() {
   tiles.registerPlugin(new TilesFadePlugin());
   tiles.registerPlugin(
     new GLTFExtensionsPlugin({
-      // Using local files from public directory for DRACO decoder
       dracoLoader: new DRACOLoader().setDecoderPath("/draco/"),
     })
   );
@@ -135,20 +124,16 @@ function reinstantiateTiles() {
 
   tiles.setResolutionFromRenderer(transition.camera, renderer);
   tiles.setCamera(transition.camera);
-
   controls.setTilesRenderer(tiles);
 }
 
 function init() {
-  // renderer
   renderer = new WebGLRenderer({ antialias: true });
   renderer.setClearColor(0x151c1f);
   document.body.appendChild(renderer.domElement);
 
-  // scene
   scene = new Scene();
 
-  // camera and transition set up
   transition = new CameraTransitionManager(
     new PerspectiveCamera(
       60,
@@ -167,11 +152,8 @@ function init() {
     tiles.setCamera(camera);
     controls.setCamera(camera);
   });
-
-  // disable adjusting the orthographic camera position for zoom since globe controls will do this
   transition.orthographicPositionalZoom = false;
 
-  // controls
   controls = new GlobeControls(
     scene,
     transition.camera,
@@ -180,23 +162,19 @@ function init() {
   );
   controls.enableDamping = true;
 
-  // initialize tiles
   reinstantiateTiles();
 
   onWindowResize();
   window.addEventListener("resize", onWindowResize, false);
   window.addEventListener("hashchange", initFromHash);
 
-  // GUI
   const gui = new GUI();
   gui.width = 300;
 
-  gui.add(params, "orthographic").onChange((v) => {
+  gui.add(params, "orthographic").onChange(() => {
     controls.getPivotPoint(transition.fixedPoint);
 
-    // don't update the cameras if they are already being animated
     if (!transition.animating) {
-      // sync the camera positions and then adjust the camera views
       transition.syncCameras();
       controls.adjustCamera(transition.perspectiveCamera);
       controls.adjustCamera(transition.orthographicCamera);
@@ -205,34 +183,43 @@ function init() {
     transition.toggle();
   });
 
-  const locationFolder = gui.addFolder('Location Controls');
-  locationFolder.add(params, 'latitude', -90, 90).name('Latitude').step(0.0001)
+  const locationFolder = gui.addFolder("Location Controls");
+  locationFolder
+    .add(params, "latitude", -90, 90)
+    .name("Latitude")
+    .step(0.0001)
     .onChange(() => {
-      // Update view when latitude changes
       if (params.autoUpdate) {
         params.goToLocation();
       }
     });
-  locationFolder.add(params, 'longitude', -180, 180).name('Longitude').step(0.0001)
+  locationFolder
+    .add(params, "longitude", -180, 180)
+    .name("Longitude")
+    .step(0.0001)
     .onChange(() => {
-      // Update view when longitude changes
       if (params.autoUpdate) {
         params.goToLocation();
       }
     });
-  locationFolder.add(params, 'altitude', 100, 10000000).name('Altitude (m)').step(100)
+  locationFolder
+    .add(params, "altitude", 100, 10000000)
+    .name("Altitude (m)")
+    .step(100)
     .onChange(() => {
-      // Update view when altitude changes
       if (params.autoUpdate) {
         params.goToLocation();
       }
     });
-  locationFolder.add(params, 'goToLocation').name('Go to Location');
-  locationFolder.add(params, 'autoUpdate').name('Auto-Update View');
+  locationFolder.add(params, "goToLocation").name("Go to Location");
+  locationFolder.add(params, "autoUpdate").name("Auto-Update View");
 
   const mapsOptions = gui.addFolder("Google Photorealistic Tiles");
   mapsOptions.add(params, "useBatchedMesh").listen();
   mapsOptions.add(params, "reload");
+
+  const routeFolder = gui.addFolder("Route Controls");
+  routeControls.setup(routeFolder);
 
   const exampleOptions = gui.addFolder("Example Options");
   exampleOptions.add(params, "enableCacheDisplay");
@@ -244,14 +231,16 @@ function init() {
   statsContainer = document.createElement("div");
   document.getElementById("info").appendChild(statsContainer);
 
-  // Stats
   stats = new Stats();
   stats.showPanel(0);
   document.body.appendChild(stats.dom);
 
-  // run hash functions
   initFromHash();
   setInterval(updateHash, 100);
+
+  routeControls.preload().catch((error) => {
+    console.error("Route controls are unavailable.", error);
+  });
 }
 
 function onWindowResize() {
@@ -281,7 +270,6 @@ function updateHash() {
   const localCameraPos = camera.position.clone().applyMatrix4(tilesMatInv);
   const localCameraMat = camera.matrixWorld.clone().premultiply(tilesMatInv);
 
-  // get the data
   WGS84_ELLIPSOID.getPositionToCartographic(localCameraPos, cartographicResult);
   WGS84_ELLIPSOID.getAzElRollFromRotationMatrix(
     cartographicResult.lat,
@@ -291,14 +279,12 @@ function updateHash() {
     CAMERA_FRAME
   );
 
-  // convert to DEG
   orientationResult.azimuth *= MathUtils.RAD2DEG;
   orientationResult.elevation *= MathUtils.RAD2DEG;
   orientationResult.roll *= MathUtils.RAD2DEG;
   cartographicResult.lat *= MathUtils.RAD2DEG;
   cartographicResult.lon *= MathUtils.RAD2DEG;
 
-  // update hash
   const urlParams = new URLSearchParams();
   urlParams.set("lat", cartographicResult.lat.toFixed(4));
   urlParams.set("lon", cartographicResult.lon.toFixed(4));
@@ -310,6 +296,7 @@ function updateHash() {
   if (params.useBatchedMesh) {
     urlParams.set("batched", 1);
   }
+
   window.history.replaceState(undefined, undefined, `#${urlParams}`);
 }
 
@@ -324,27 +311,22 @@ function initFromHash() {
     return;
   }
 
-  // update the tiles matrix world so we can use it
   tiles.group.updateMatrixWorld();
 
-  // get the position fields
   const camera = transition.camera;
   const lat = parseFloat(urlParams.get("lat"));
   const lon = parseFloat(urlParams.get("lon"));
   const height = parseFloat(urlParams.get("height")) || 1000;
-  
-  // Update the params to reflect the current position
+
   params.latitude = lat;
   params.longitude = lon;
   params.altitude = height;
 
   if (urlParams.has("az") && urlParams.has("el")) {
-    // get the az el fields for rotation if present
     const az = parseFloat(urlParams.get("az"));
     const el = parseFloat(urlParams.get("el"));
     const roll = parseFloat(urlParams.get("roll")) || 0;
 
-    // extract the east-north-up frame into matrix world
     WGS84_ELLIPSOID.getRotationMatrixFromAzElRoll(
       lat * MathUtils.DEG2RAD,
       lon * MathUtils.DEG2RAD,
@@ -355,7 +337,6 @@ function initFromHash() {
       CAMERA_FRAME
     );
 
-    // apply the necessary tiles transform
     camera.matrixWorld.premultiply(tiles.group.matrixWorld);
     camera.matrixWorld.decompose(
       camera.position,
@@ -363,7 +344,6 @@ function initFromHash() {
       camera.scale
     );
 
-    // get the height
     WGS84_ELLIPSOID.getCartographicToPosition(
       lat * MathUtils.DEG2RAD,
       lon * MathUtils.DEG2RAD,
@@ -372,7 +352,6 @@ function initFromHash() {
     );
     camera.position.applyMatrix4(tiles.group.matrixWorld);
   } else {
-    // default to looking down if no az el are present
     WGS84_ELLIPSOID.getCartographicToPosition(
       lat * MathUtils.DEG2RAD,
       lon * MathUtils.DEG2RAD,
@@ -387,18 +366,18 @@ function initFromHash() {
 function animate() {
   requestAnimationFrame(animate);
 
-  if (!tiles) return;
+  if (!tiles) {
+    return;
+  }
 
   controls.enabled = !transition.animating;
   controls.update();
   transition.update();
 
-  // update options
   const camera = transition.camera;
   tiles.setResolutionFromRenderer(camera, renderer);
   tiles.setCamera(camera);
 
-  // update tiles
   camera.updateMatrixWorld();
   tiles.errorTarget = params.errorTarget;
   tiles.update();
@@ -410,7 +389,6 @@ function animate() {
 }
 
 function updateHtml() {
-  // render html text updates
   let str = "";
 
   if (params.enableCacheDisplay) {
@@ -452,8 +430,8 @@ function updateHtml() {
 
   const mat = tiles.group.matrixWorld.clone().invert();
   const vec = transition.camera.position.clone().applyMatrix4(mat);
-
   const res = {};
+
   WGS84_ELLIPSOID.getPositionToCartographic(vec, res);
 
   const attributions = tiles.getAttributions()[0]?.value || "";

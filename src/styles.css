@@ -50,3 +50,39 @@ canvas {
 .light #credits {
   color: #234;
 }
+
+.route-autocomplete-popup {
+  position: fixed;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  max-height: 220px;
+  overflow-y: auto;
+  background: rgba(28, 28, 30, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(10px);
+  pointer-events: auto;
+}
+
+.route-autocomplete-option {
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: #fff;
+  text-align: left;
+  font-size: 11px;
+  line-height: 1.35;
+  font-family: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.route-autocomplete-option:hover,
+.route-autocomplete-option.active,
+.route-autocomplete-option:focus {
+  background: rgba(255, 255, 255, 0.1);
+  outline: none;
+}

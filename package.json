@@ -17,6 +17,7 @@
     "vite": "^6.2.1"
   },
   "dependencies": {
+    "@googlemaps/js-api-loader": "^2.0.2",
     "3d-tiles-renderer": "^0.4.8",
     "stats.js": "^0.17.0",
     "three": "^0.174.0"
