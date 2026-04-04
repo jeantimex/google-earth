@@ -28,6 +28,7 @@ export function createRouteVisualization() {
   let altitudeOffset = 0;
   let markerAltitudeOffset = 0;
   let markerRadius = 4;
+  let showMarkers = false;
   let primaryRouteMarkerPoints = [];
   let carMesh = null;
   let animationState = null;
@@ -107,7 +108,7 @@ export function createRouteVisualization() {
         const lineMaterial = new LineMaterial({
           color: routeColor,
           linewidth: routeIndex === 0 ? 6 : 4,
-          worldUnits: true,
+          worldUnits: false,
           dashed: segment.travelMode === "WALKING",
           dashSize: 12,
           gapSize: 8,
@@ -129,24 +130,26 @@ export function createRouteVisualization() {
         primaryRouteMarkerPoints = markerPoints.map((point) => point.clone());
       }
 
-      const markerMaterial = new MeshBasicMaterial({
-        color: routeColor,
-        transparent: true,
-        opacity: routeIndex === 0 ? 0.95 : 0.8,
-      });
+      if (showMarkers) {
+        const markerMaterial = new MeshBasicMaterial({
+          color: routeColor,
+          transparent: true,
+          opacity: routeIndex === 0 ? 0.95 : 0.8,
+        });
 
-      markerPoints.forEach((point) => {
-        const marker = new Mesh(
-          new CircleGeometry(markerRadius, MARKER_SEGMENTS),
-          markerMaterial.clone()
-        );
-        const normal = point.clone().normalize();
-        marker.position.copy(point);
-        marker.quaternion.copy(
-          new Quaternion().setFromUnitVectors(zAxis, normal)
-        );
-        routeGroup.add(marker);
-      });
+        markerPoints.forEach((point) => {
+          const marker = new Mesh(
+            new CircleGeometry(markerRadius, MARKER_SEGMENTS),
+            markerMaterial.clone()
+          );
+          const normal = point.clone().normalize();
+          marker.position.copy(point);
+          marker.quaternion.copy(
+            new Quaternion().setFromUnitVectors(zAxis, normal)
+          );
+          routeGroup.add(marker);
+        });
+      }
     });
 
     const bounds = new Sphere();
@@ -262,6 +265,14 @@ export function createRouteVisualization() {
 
   function setMarkerRadius(value) {
     markerRadius = value;
+
+    if (lastResponse) {
+      render(lastResponse);
+    }
+  }
+
+  function setShowMarkers(value) {
+    showMarkers = value;
 
     if (lastResponse) {
       render(lastResponse);
@@ -385,6 +396,7 @@ export function createRouteVisualization() {
     setAltitudeOffset,
     setMarkerAltitudeOffset,
     setMarkerRadius,
+    setShowMarkers,
     setResolution,
   };
 }

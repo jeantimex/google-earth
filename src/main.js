@@ -73,6 +73,7 @@ const params = {
   routeAltitudeOffset: 37,
   routeMarkerAltitudeOffset: 41,
   routeMarkerRadius: 4,
+  showMarkers: false,
   firstPerson: false,
   followObject: false,
   lookAtObject: false,
@@ -342,6 +343,12 @@ function init() {
       routeVisualization.setMarkerAltitudeOffset(
         value - params.routeAltitudeOffset
       );
+    });
+  routeFolder
+    .add(params, "showMarkers")
+    .name("Show Markers")
+    .onChange((value) => {
+      routeVisualization.setShowMarkers(value);
     });
   routeFolder
     .add(params, "routeMarkerRadius", 1, 100, 1)
