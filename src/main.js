@@ -320,7 +320,7 @@ function init() {
   fpFolder.add(params, "fpSeatOffset", -5, 10, 0.5).name("Seat Offset");
   fpFolder.add(params, "fpYaw", -180, 180, 1).name("Yaw (Look L/R)");
   fpFolder.add(params, "fpPitch", -90, 90, 1).name("Pitch (Look U/D)");
-  fpFolder.add(params, "fpDistance", 0, 500, 1).name("Distance (0=1st person)");
+  fpFolder.add(params, "fpDistance", -500, 500, 1).name("Distance (-=front, +=back)");
   routeFolder.add(params, "followObject").name("Follow Object").onChange((value) => {
     if (!value) {
       prevCarPosition = null;
@@ -758,12 +758,13 @@ function applyFirstPersonCamera(camera) {
   const pitchQuat = new Quaternion().setFromAxisAngle(rotatedRight, pitchRad);
   const lookDirection = rotatedForward.clone().applyQuaternion(pitchQuat);
 
-  if (fpDistance > 0) {
+  if (fpDistance !== 0) {
     // Third-person: orbit camera around the car based on yaw/pitch
-    // Camera offset is opposite of look direction
+    // Camera offset is opposite of look direction (negative distance = in front)
     const cameraOffset = lookDirection.clone().negate().multiplyScalar(fpDistance);
     // Add some height based on pitch (higher when looking down)
-    const heightBoost = fpDistance * 0.3 * (1 - Math.sin(pitchRad));
+    const absDistance = Math.abs(fpDistance);
+    const heightBoost = absDistance * 0.3 * (1 - Math.sin(pitchRad));
     const cameraPosition = basePosition
       .clone()
       .add(cameraOffset)
