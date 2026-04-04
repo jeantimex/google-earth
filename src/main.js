@@ -24,6 +24,7 @@ import {
   MathUtils,
   OrthographicCamera,
   Vector3,
+  Quaternion,
 } from "three";
 import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
 import { GUI } from "three/examples/jsm/libs/lil-gui.module.min.js";
@@ -75,6 +76,14 @@ const params = {
   firstPerson: false,
   followObject: false,
   lookAtObject: false,
+  // First-person camera settings
+  fpFov: 60,
+  fpEyeHeight: 3,
+  fpForwardLook: 30,
+  fpSeatOffset: 2,
+  fpYaw: 0,        // horizontal look (degrees, -180 to 180)
+  fpPitch: 0,      // vertical look (degrees, -90 to 90)
+  fpDistance: 0,   // 0 = inside car, >0 = behind car (third-person follow)
   goToLocation: () => {
     const { latitude, longitude, altitude } = params;
     const urlParams = new URLSearchParams();
@@ -204,6 +213,32 @@ function init() {
   window.addEventListener("resize", onWindowResize, false);
   window.addEventListener("hashchange", initFromHash);
 
+  // Keyboard controls for first-person look-around
+  window.addEventListener("keydown", (e) => {
+    if (!params.firstPerson) return;
+    const lookSpeed = 3;
+    switch (e.key) {
+      case "ArrowLeft":
+        params.fpYaw = Math.max(-180, params.fpYaw - lookSpeed);
+        break;
+      case "ArrowRight":
+        params.fpYaw = Math.min(180, params.fpYaw + lookSpeed);
+        break;
+      case "ArrowUp":
+        params.fpPitch = Math.min(90, params.fpPitch + lookSpeed);
+        break;
+      case "ArrowDown":
+        params.fpPitch = Math.max(-90, params.fpPitch - lookSpeed);
+        break;
+      case "r":
+      case "R":
+        // Reset view to forward
+        params.fpYaw = 0;
+        params.fpPitch = 0;
+        break;
+    }
+  });
+
   const gui = new GUI();
   gui.width = 300;
 
@@ -266,8 +301,25 @@ function init() {
     }
     if (value) {
       prevCarPosition = null;
+      // Apply FOV when entering first-person mode
+      transition.perspectiveCamera.fov = params.fpFov;
+      transition.perspectiveCamera.updateProjectionMatrix();
     }
   });
+
+  const fpFolder = routeFolder.addFolder("First Person Camera");
+  fpFolder.add(params, "fpFov", 30, 120, 1).name("FOV").onChange((value) => {
+    if (params.firstPerson) {
+      transition.perspectiveCamera.fov = value;
+      transition.perspectiveCamera.updateProjectionMatrix();
+    }
+  });
+  fpFolder.add(params, "fpEyeHeight", 0, 20, 0.5).name("Eye Height");
+  fpFolder.add(params, "fpForwardLook", 5, 100, 1).name("Forward Look");
+  fpFolder.add(params, "fpSeatOffset", -5, 10, 0.5).name("Seat Offset");
+  fpFolder.add(params, "fpYaw", -180, 180, 1).name("Yaw (Look L/R)");
+  fpFolder.add(params, "fpPitch", -90, 90, 1).name("Pitch (Look U/D)");
+  fpFolder.add(params, "fpDistance", 0, 500, 1).name("Distance (0=1st person)");
   routeFolder.add(params, "followObject").name("Follow Object").onChange((value) => {
     if (!value) {
       prevCarPosition = null;
@@ -680,18 +732,47 @@ function applyFirstPersonCamera(camera) {
     return;
   }
 
-  const eyeHeight = 3;
-  const forwardLook = 30;
-  const seatOffset = 2;
-  const position = pose.position
-    .clone()
-    .addScaledVector(pose.up, eyeHeight)
-    .addScaledVector(pose.forward, seatOffset);
-  const lookAt = position.clone().addScaledVector(pose.forward, forwardLook);
+  const { fpEyeHeight, fpForwardLook, fpSeatOffset, fpYaw, fpPitch, fpDistance } = params;
+  const yawRad = MathUtils.degToRad(fpYaw);
+  const pitchRad = MathUtils.degToRad(fpPitch);
 
-  camera.position.copy(position);
-  camera.up.copy(pose.up);
-  camera.lookAt(lookAt);
+  // Base position at car with eye height
+  const basePosition = pose.position
+    .clone()
+    .addScaledVector(pose.up, fpEyeHeight)
+    .addScaledVector(pose.forward, fpSeatOffset);
+
+  // Calculate rotated direction based on yaw (around up axis)
+  const yawQuat = new Quaternion().setFromAxisAngle(pose.up, -yawRad);
+  const rotatedForward = pose.forward.clone().applyQuaternion(yawQuat);
+  const rotatedRight = pose.right.clone().applyQuaternion(yawQuat);
+
+  // Apply pitch rotation around the rotated right axis
+  const pitchQuat = new Quaternion().setFromAxisAngle(rotatedRight, pitchRad);
+  const lookDirection = rotatedForward.clone().applyQuaternion(pitchQuat);
+
+  if (fpDistance > 0) {
+    // Third-person: orbit camera around the car based on yaw/pitch
+    // Camera offset is opposite of look direction
+    const cameraOffset = lookDirection.clone().negate().multiplyScalar(fpDistance);
+    // Add some height based on pitch (higher when looking down)
+    const heightBoost = fpDistance * 0.3 * (1 - Math.sin(pitchRad));
+    const cameraPosition = basePosition
+      .clone()
+      .add(cameraOffset)
+      .addScaledVector(pose.up, heightBoost);
+
+    camera.position.copy(cameraPosition);
+    camera.up.copy(pose.up);
+    camera.lookAt(basePosition);
+  } else {
+    // First-person: position at driver's seat, look in rotated direction
+    camera.position.copy(basePosition);
+    camera.up.copy(pose.up);
+    const lookAt = basePosition.clone().addScaledVector(lookDirection, fpForwardLook);
+    camera.lookAt(lookAt);
+  }
+
   camera.updateMatrixWorld();
   controls.adjustCamera(camera);
 }
