@@ -27,7 +27,7 @@ export function createRouteVisualization() {
   let lastResponse = null;
   let altitudeOffset = 0;
   let markerAltitudeOffset = 0;
-  let markerRadius = 14;
+  let markerRadius = 4;
   let primaryRouteMarkerPoints = [];
   let carMesh = null;
   let animationState = null;
@@ -69,8 +69,8 @@ export function createRouteVisualization() {
   }
 
   function render(response) {
-    lastResponse = response;
     clear();
+    lastResponse = response;
 
     if (!activeTilesGroup) {
       return;

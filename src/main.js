@@ -72,7 +72,7 @@ const params = {
   autoUpdate: true,
   routeAltitudeOffset: 37,
   routeMarkerAltitudeOffset: 41,
-  routeMarkerRadius: 14,
+  routeMarkerRadius: 4,
   firstPerson: false,
   followObject: false,
   lookAtObject: false,
