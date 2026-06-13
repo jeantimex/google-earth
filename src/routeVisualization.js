@@ -10,6 +10,7 @@ import {
   Mesh,
   MeshBasicMaterial,
   Quaternion,
+  Raycaster,
   Sphere,
   Vector3,
 } from "three";
@@ -18,6 +19,18 @@ import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 
 const MARKER_SEGMENTS = 24;
+const DEG2RAD = Math.PI / 180;
+
+// Relative-to-mesh draping: snap the route onto the loaded 3D tiles surface
+// (e.g. bridge decks) so the line stays continuous instead of sinking under
+// elevated geometry. Tuned in meters.
+const DRAPE_SAMPLE_SPACING = 8; // target spacing between draped samples
+const DRAPE_MAX_SUBDIVISIONS = 64; // cap subdivisions per source segment
+const DRAPE_RAY_ABOVE = 300; // start the ray this far above the terrain point
+const DRAPE_RAY_BELOW = 80; // and extend it this far below
+const DRAPE_SPIKE_THRESHOLD = 8; // height deviation that flags an under-crossing
+const DRAPE_INTERVAL = 0.15; // seconds between re-drape passes
+const DRAPE_RAYCAST_BUDGET = 150; // max raycasts per pass, across all routes
 
 export function createRouteVisualization() {
   const routeGroup = new Group();
@@ -33,6 +46,14 @@ export function createRouteVisualization() {
   let carMesh = null;
   let animationState = null;
   let firstPersonPose = null;
+  let drapeTargets = [];
+  let drapeAccumulator = 0;
+  const raycaster = new Raycaster();
+  raycaster.firstHitOnly = true;
+  const rayOrigin = new Vector3();
+  const rayDir = new Vector3();
+  const drapeFinalPos = new Vector3();
+  const drapeIntersects = [];
   const zAxis = new Vector3(0, 0, 1);
   const routeTangent = new Vector3();
   const routeNormal = new Vector3();
@@ -59,6 +80,7 @@ export function createRouteVisualization() {
     animationState = null;
     carMesh = null;
     firstPersonPose = null;
+    drapeTargets = [];
 
     if (activeTilesGroup?.parent) {
       activeTilesGroup.parent.add(routeGroup);
@@ -92,19 +114,21 @@ export function createRouteVisualization() {
       const stepSegments = getRouteSegments(route);
 
       stepSegments.forEach((segment) => {
-        const points = segment.path.map((point) =>
-          routePointToVector3(point).applyMatrix4(activeTilesGroup.matrixWorld)
-        );
-        if (points.length < 2) {
+        const samples = buildDrapeSamples(segment.path);
+        if (samples.length < 2) {
           return;
         }
 
-        allPoints.push(...points);
+        const positions = new Array(samples.length * 3);
+        samples.forEach((sample, index) => {
+          allPoints.push(sample.basePos);
+          positions[index * 3] = sample.basePos.x;
+          positions[index * 3 + 1] = sample.basePos.y;
+          positions[index * 3 + 2] = sample.basePos.z;
+        });
 
         const lineGeometry = new LineGeometry();
-        lineGeometry.setPositions(
-          points.flatMap((point) => [point.x, point.y, point.z])
-        );
+        lineGeometry.setPositions(positions);
         const lineMaterial = new LineMaterial({
           color: routeColor,
           linewidth: routeIndex === 0 ? 6 : 4,
@@ -118,6 +142,22 @@ export function createRouteVisualization() {
         const line = new Line2(lineGeometry, lineMaterial);
         line.computeLineDistances();
         routeGroup.add(line);
+
+        drapeTargets.push({
+          line,
+          geometry: lineGeometry,
+          samples,
+          positions,
+          // rawHeights holds each sample's mesh hit (NaN until resolved); work
+          // is the smoothed copy written to the geometry so smoothing never
+          // feeds back into the raw hits.
+          rawHeights: new Float64Array(samples.length).fill(NaN),
+          work: new Float64Array(samples.length),
+          resolved: new Uint8Array(samples.length),
+          resolvedCount: 0,
+          cursor: 0,
+          complete: false,
+        });
       });
 
       const markerPoints = route.path.map((point) =>
@@ -163,6 +203,7 @@ export function createRouteVisualization() {
     primaryRouteMarkerPoints = [];
     carMesh = null;
     firstPersonPose = null;
+    drapeTargets = [];
     routeGroup.children.forEach((child) => {
       child.geometry?.dispose?.();
       if (Array.isArray(child.material)) {
@@ -207,6 +248,8 @@ export function createRouteVisualization() {
   }
 
   function update(deltaSeconds) {
+    updateDrape(deltaSeconds);
+
     if (!animationState || !carMesh || animationState.paused) {
       return;
     }
@@ -245,6 +288,215 @@ export function createRouteVisualization() {
     );
 
     return position;
+  }
+
+  function geodeticToWorld(lat, lng, altitude, matrixWorld) {
+    const position = new Vector3();
+    WGS84_ELLIPSOID.getCartographicToPosition(
+      lat * DEG2RAD,
+      lng * DEG2RAD,
+      altitude,
+      position
+    );
+    return position.applyMatrix4(matrixWorld);
+  }
+
+  function makeSample(lat, lng, altitude, matrixWorld) {
+    const terrainPos = geodeticToWorld(lat, lng, altitude, matrixWorld);
+    const up = terrainPos.clone().normalize();
+    const basePos = terrainPos.clone().addScaledVector(up, altitudeOffset);
+    return { terrainPos, up, basePos };
+  }
+
+  // Densify the source polyline so the draped line conforms to curved surfaces
+  // (e.g. bridge decks) instead of cutting straight chords through the mesh.
+  function buildDrapeSamples(path) {
+    const matrixWorld = activeTilesGroup.matrixWorld;
+    const raw = path
+      .map((point) => {
+        const lat = getPointValue(point, "lat");
+        const lng = getPointValue(point, "lng");
+        if (typeof lat !== "number" || typeof lng !== "number") {
+          return null;
+        }
+        const alt = getPointValue(point, "altitude") ?? 0;
+        return { lat, lng, alt, pos: geodeticToWorld(lat, lng, alt, matrixWorld) };
+      })
+      .filter(Boolean);
+
+    if (raw.length < 2) {
+      return [];
+    }
+
+    const samples = [];
+    for (let i = 0; i < raw.length - 1; i++) {
+      const a = raw[i];
+      const b = raw[i + 1];
+      const subdivisions = Math.max(
+        1,
+        Math.min(
+          DRAPE_MAX_SUBDIVISIONS,
+          Math.ceil(a.pos.distanceTo(b.pos) / DRAPE_SAMPLE_SPACING)
+        )
+      );
+      for (let j = 0; j < subdivisions; j++) {
+        const t = j / subdivisions;
+        samples.push(
+          makeSample(
+            a.lat + (b.lat - a.lat) * t,
+            a.lng + (b.lng - a.lng) * t,
+            a.alt + (b.alt - a.alt) * t,
+            matrixWorld
+          )
+        );
+      }
+    }
+    const last = raw[raw.length - 1];
+    samples.push(makeSample(last.lat, last.lng, last.alt, matrixWorld));
+    return samples;
+  }
+
+  function updateDrape(deltaSeconds) {
+    if (!activeTilesGroup || drapeTargets.length === 0) {
+      return;
+    }
+
+    drapeAccumulator += deltaSeconds;
+    if (drapeAccumulator < DRAPE_INTERVAL) {
+      return;
+    }
+    drapeAccumulator = 0;
+
+    if (drapeTargets.every((target) => target.complete)) {
+      return; // every route is fully draped; nothing left to raycast
+    }
+
+    activeTilesGroup.updateMatrixWorld();
+
+    // Bound the work per pass so a long route can't stall a frame. Unresolved
+    // samples are retried across passes as tiles stream in.
+    let budget = DRAPE_RAYCAST_BUDGET;
+    for (const target of drapeTargets) {
+      if (budget <= 0) {
+        break;
+      }
+      if (!target.complete) {
+        budget = drapeTarget(target, budget);
+      }
+    }
+  }
+
+  function drapeTarget(target, budget) {
+    const { samples, rawHeights, resolved } = target;
+    let changed = false;
+    let scanned = 0;
+    let i = target.cursor;
+
+    while (scanned < samples.length && budget > 0) {
+      if (!resolved[i]) {
+        const sample = samples[i];
+        rayOrigin
+          .copy(sample.terrainPos)
+          .addScaledVector(sample.up, DRAPE_RAY_ABOVE);
+        rayDir.copy(sample.up).multiplyScalar(-1);
+        raycaster.set(rayOrigin, rayDir);
+        raycaster.far = DRAPE_RAY_ABOVE + DRAPE_RAY_BELOW;
+        drapeIntersects.length = 0;
+        raycaster.intersectObject(activeTilesGroup, true, drapeIntersects);
+
+        if (drapeIntersects.length > 0) {
+          // First hit is the highest surface along the downward ray (the deck).
+          drapeFinalPos
+            .copy(drapeIntersects[0].point)
+            .sub(sample.terrainPos);
+          rawHeights[i] = drapeFinalPos.dot(sample.up);
+          resolved[i] = 1;
+          target.resolvedCount++;
+          changed = true;
+        }
+        budget--;
+      }
+
+      i = (i + 1) % samples.length;
+      scanned++;
+    }
+
+    target.cursor = i;
+    if (target.resolvedCount >= samples.length) {
+      target.complete = true;
+    }
+
+    if (changed) {
+      rebuildTargetGeometry(target);
+    }
+
+    return budget;
+  }
+
+  function rebuildTargetGeometry(target) {
+    const { samples, rawHeights, work, positions } = target;
+    work.set(rawHeights);
+    fillAndSmoothHeights(work);
+
+    for (let i = 0; i < samples.length; i++) {
+      const sample = samples[i];
+      const height = Number.isFinite(work[i]) ? work[i] : 0;
+      drapeFinalPos
+        .copy(sample.terrainPos)
+        .addScaledVector(sample.up, height + altitudeOffset);
+      positions[i * 3] = drapeFinalPos.x;
+      positions[i * 3 + 1] = drapeFinalPos.y;
+      positions[i * 3 + 2] = drapeFinalPos.z;
+    }
+
+    target.geometry.setPositions(positions);
+    target.line.computeLineDistances();
+  }
+
+  function fillAndSmoothHeights(heights) {
+    const n = heights.length;
+
+    // 1) Fill samples with no mesh hit by interpolating between valid neighbors.
+    let prev = -1;
+    for (let i = 0; i < n; i++) {
+      if (!Number.isFinite(heights[i])) {
+        continue;
+      }
+      if (prev === -1) {
+        for (let k = 0; k < i; k++) heights[k] = heights[i];
+      } else if (i - prev > 1) {
+        const span = heights[i] - heights[prev];
+        for (let k = prev + 1; k < i; k++) {
+          heights[k] = heights[prev] + (span * (k - prev)) / (i - prev);
+        }
+      }
+      prev = i;
+    }
+    if (prev === -1) {
+      return; // nothing was hit
+    }
+    for (let k = prev + 1; k < n; k++) heights[k] = heights[prev];
+
+    // 2) Drop spikes: where the route passes under a crossing overpass the
+    //    top-down ray grabs the upper deck. Pull such outliers back to the
+    //    local median so the line stays on its own road.
+    const window = 2;
+    for (let pass = 0; pass < 2; pass++) {
+      const source = heights.slice();
+      for (let i = 0; i < n; i++) {
+        const lo = Math.max(0, i - window);
+        const hi = Math.min(n - 1, i + window);
+        const neighborhood = [];
+        for (let k = lo; k <= hi; k++) {
+          if (k !== i) neighborhood.push(source[k]);
+        }
+        neighborhood.sort((a, b) => a - b);
+        const median = neighborhood[Math.floor(neighborhood.length / 2)];
+        if (Math.abs(source[i] - median) > DRAPE_SPIKE_THRESHOLD) {
+          heights[i] = median;
+        }
+      }
+    }
   }
 
   function setAltitudeOffset(value) {
