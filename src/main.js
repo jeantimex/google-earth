@@ -70,7 +70,7 @@ const params = {
   longitude: 0,
   altitude: 9000000,
   autoUpdate: true,
-  routeAltitudeOffset: 2,
+  routeAltitudeOffset: 0,
   routeMarkerAltitudeOffset: 6,
   routeMarkerRadius: 4,
   showMarkers: false,
@@ -660,9 +660,9 @@ function animate() {
   controls.enabled = !transition.animating && !params.firstPerson;
   controls.update();
   transition.update();
-  routeVisualization.update(deltaSeconds);
 
   const camera = transition.camera;
+  routeVisualization.update(deltaSeconds, camera);
   tiles.setResolutionFromRenderer(camera, renderer);
   tiles.setCamera(camera);
 

@@ -5,6 +5,7 @@ import {
   CatmullRomCurve3,
   CircleGeometry,
   Color,
+  Frustum,
   Group,
   Matrix4,
   Mesh,
@@ -31,6 +32,9 @@ const DRAPE_RAY_BELOW = 80; // and extend it this far below
 const DRAPE_SPIKE_THRESHOLD = 8; // height deviation that flags an under-crossing
 const DRAPE_INTERVAL = 0.15; // seconds between re-drape passes
 const DRAPE_RAYCAST_BUDGET = 150; // max raycasts per pass, across all routes
+const DRAPE_MAX_DISTANCE = 3000; // only drape samples within this range of camera
+const DRAPE_CAM_EPS_SQ = 1; // camera move (m^2) that triggers a re-drape
+const DRAPE_HEIGHT_EPS = 0.05; // ignore height changes smaller than this (m)
 
 export function createRouteVisualization() {
   const routeGroup = new Group();
@@ -48,12 +52,21 @@ export function createRouteVisualization() {
   let firstPersonPose = null;
   let drapeTargets = [];
   let drapeAccumulator = 0;
+  let drapeDirty = false; // tiles streamed in / route changed: needs a pass
+  let drapePending = false; // budget ran out mid-pass: keep going next pass
+  let drapeTargetCursor = 0; // round-robins which route gets budget first
   const raycaster = new Raycaster();
   raycaster.firstHitOnly = true;
   const rayOrigin = new Vector3();
   const rayDir = new Vector3();
   const drapeFinalPos = new Vector3();
   const drapeIntersects = [];
+  const drapeFrustum = new Frustum();
+  const drapeProjScreen = new Matrix4();
+  const drapeSphere = new Sphere(new Vector3(), 30);
+  const drapeCamPos = new Vector3();
+  const lastCamPos = new Vector3(Infinity, Infinity, Infinity);
+  let drapeTilesRenderer = null;
   const zAxis = new Vector3(0, 0, 1);
   const routeTangent = new Vector3();
   const routeNormal = new Vector3();
@@ -75,12 +88,26 @@ export function createRouteVisualization() {
     }
 
     routeGroup.removeFromParent();
+
+    if (drapeTilesRenderer) {
+      drapeTilesRenderer.removeEventListener("load-content", markDrapeDirty);
+      drapeTilesRenderer.removeEventListener("tiles-load-end", markDrapeDirty);
+      drapeTilesRenderer = null;
+    }
+
     activeTilesGroup = tilesGroup;
     primaryRouteMarkerPoints = [];
     animationState = null;
     carMesh = null;
     firstPersonPose = null;
     drapeTargets = [];
+
+    // Re-drape as new tile detail streams in (e.g. higher LOD on zoom-in).
+    drapeTilesRenderer = tilesGroup?.tilesRenderer ?? null;
+    if (drapeTilesRenderer) {
+      drapeTilesRenderer.addEventListener("load-content", markDrapeDirty);
+      drapeTilesRenderer.addEventListener("tiles-load-end", markDrapeDirty);
+    }
 
     if (activeTilesGroup?.parent) {
       activeTilesGroup.parent.add(routeGroup);
@@ -148,15 +175,12 @@ export function createRouteVisualization() {
           geometry: lineGeometry,
           samples,
           positions,
-          // rawHeights holds each sample's mesh hit (NaN until resolved); work
-          // is the smoothed copy written to the geometry so smoothing never
-          // feeds back into the raw hits.
+          // rawHeights holds each sample's latest mesh hit (NaN until first
+          // hit); work is the smoothed copy written to the geometry so
+          // smoothing never feeds back into the raw hits.
           rawHeights: new Float64Array(samples.length).fill(NaN),
           work: new Float64Array(samples.length),
-          resolved: new Uint8Array(samples.length),
-          resolvedCount: 0,
           cursor: 0,
-          complete: false,
         });
       });
 
@@ -191,6 +215,10 @@ export function createRouteVisualization() {
         });
       }
     });
+
+    drapeDirty = true;
+    drapePending = false;
+    drapeTargetCursor = 0;
 
     const bounds = new Sphere();
     new Box3().setFromPoints(allPoints).getBoundingSphere(bounds);
@@ -247,8 +275,8 @@ export function createRouteVisualization() {
     updateCarTransform();
   }
 
-  function update(deltaSeconds) {
-    updateDrape(deltaSeconds);
+  function update(deltaSeconds, camera) {
+    updateDrape(deltaSeconds, camera);
 
     if (!animationState || !carMesh || animationState.paused) {
       return;
@@ -356,8 +384,12 @@ export function createRouteVisualization() {
     return samples;
   }
 
-  function updateDrape(deltaSeconds) {
-    if (!activeTilesGroup || drapeTargets.length === 0) {
+  function markDrapeDirty() {
+    drapeDirty = true;
+  }
+
+  function updateDrape(deltaSeconds, camera) {
+    if (!activeTilesGroup || drapeTargets.length === 0 || !camera) {
       return;
     }
 
@@ -367,70 +399,106 @@ export function createRouteVisualization() {
     }
     drapeAccumulator = 0;
 
-    if (drapeTargets.every((target) => target.complete)) {
-      return; // every route is fully draped; nothing left to raycast
+    camera.getWorldPosition(drapeCamPos);
+    const cameraMoved =
+      lastCamPos.distanceToSquared(drapeCamPos) > DRAPE_CAM_EPS_SQ;
+
+    // Rest when nothing relevant changed: no camera movement, no newly loaded
+    // tiles, and no work left over from a budget-capped pass.
+    if (!drapeDirty && !drapePending && !cameraMoved) {
+      return;
     }
+
+    lastCamPos.copy(drapeCamPos);
+    drapeDirty = false;
+    drapePending = false;
 
     activeTilesGroup.updateMatrixWorld();
+    drapeProjScreen.multiplyMatrices(
+      camera.projectionMatrix,
+      camera.matrixWorldInverse
+    );
+    drapeFrustum.setFromProjectionMatrix(drapeProjScreen);
 
-    // Bound the work per pass so a long route can't stall a frame. Unresolved
-    // samples are retried across passes as tiles stream in.
+    const maxDistanceSq = DRAPE_MAX_DISTANCE * DRAPE_MAX_DISTANCE;
+    const changed = new Set();
     let budget = DRAPE_RAYCAST_BUDGET;
-    for (const target of drapeTargets) {
-      if (budget <= 0) {
+
+    for (let t = 0; t < drapeTargets.length && budget > 0; t++) {
+      const index = (drapeTargetCursor + t) % drapeTargets.length;
+      const target = drapeTargets[index];
+      const { samples, rawHeights } = target;
+      let scanned = 0;
+
+      while (scanned < samples.length) {
+        const i = target.cursor;
+        const sample = samples[i];
+
+        // Only spend raycasts on samples in view and close enough that the
+        // tiles under them are at high detail; far/coarse hits give bad
+        // heights, so leave those on the terrain baseline until we approach.
+        if (
+          drapeCamPos.distanceToSquared(sample.basePos) <= maxDistanceSq &&
+          frustumContains(sample.basePos)
+        ) {
+          if (budget <= 0) {
+            drapePending = true;
+            break;
+          }
+          if (raycastSample(sample, rawHeights, i)) {
+            changed.add(target);
+          }
+          budget--;
+        }
+
+        target.cursor = (i + 1) % samples.length;
+        scanned++;
+      }
+
+      if (drapePending) {
+        drapeTargetCursor = index;
         break;
       }
-      if (!target.complete) {
-        budget = drapeTarget(target, budget);
-      }
     }
+
+    if (!drapePending) {
+      drapeTargetCursor = 0;
+    }
+
+    changed.forEach(rebuildTargetGeometry);
   }
 
-  function drapeTarget(target, budget) {
-    const { samples, rawHeights, resolved } = target;
-    let changed = false;
-    let scanned = 0;
-    let i = target.cursor;
+  function frustumContains(point) {
+    drapeSphere.center.copy(point);
+    return drapeFrustum.intersectsSphere(drapeSphere);
+  }
 
-    while (scanned < samples.length && budget > 0) {
-      if (!resolved[i]) {
-        const sample = samples[i];
-        rayOrigin
-          .copy(sample.terrainPos)
-          .addScaledVector(sample.up, DRAPE_RAY_ABOVE);
-        rayDir.copy(sample.up).multiplyScalar(-1);
-        raycaster.set(rayOrigin, rayDir);
-        raycaster.far = DRAPE_RAY_ABOVE + DRAPE_RAY_BELOW;
-        drapeIntersects.length = 0;
-        raycaster.intersectObject(activeTilesGroup, true, drapeIntersects);
+  // Returns true when the sample's draped height actually changed.
+  function raycastSample(sample, rawHeights, index) {
+    rayOrigin.copy(sample.terrainPos).addScaledVector(sample.up, DRAPE_RAY_ABOVE);
+    rayDir.copy(sample.up).multiplyScalar(-1);
+    raycaster.set(rayOrigin, rayDir);
+    raycaster.far = DRAPE_RAY_ABOVE + DRAPE_RAY_BELOW;
+    drapeIntersects.length = 0;
+    raycaster.intersectObject(activeTilesGroup, true, drapeIntersects);
 
-        if (drapeIntersects.length > 0) {
-          // First hit is the highest surface along the downward ray (the deck).
-          drapeFinalPos
-            .copy(drapeIntersects[0].point)
-            .sub(sample.terrainPos);
-          rawHeights[i] = drapeFinalPos.dot(sample.up);
-          resolved[i] = 1;
-          target.resolvedCount++;
-          changed = true;
-        }
-        budget--;
-      }
-
-      i = (i + 1) % samples.length;
-      scanned++;
+    if (drapeIntersects.length === 0) {
+      return false; // no geometry here yet; keep the previous height
     }
 
-    target.cursor = i;
-    if (target.resolvedCount >= samples.length) {
-      target.complete = true;
+    // First hit is the highest surface along the downward ray (the deck).
+    drapeFinalPos.copy(drapeIntersects[0].point).sub(sample.terrainPos);
+    const height = drapeFinalPos.dot(sample.up);
+
+    if (
+      Number.isFinite(rawHeights[index]) &&
+      Math.abs(rawHeights[index] - height) < DRAPE_HEIGHT_EPS
+    ) {
+      return false;
     }
 
-    if (changed) {
-      rebuildTargetGeometry(target);
-    }
-
-    return budget;
+    rawHeights[index] = height;
+    return true;
   }
 
   function rebuildTargetGeometry(target) {
@@ -501,16 +569,18 @@ export function createRouteVisualization() {
 
   function setAltitudeOffset(value) {
     altitudeOffset = value;
-
-    if (lastResponse) {
-      render(lastResponse);
-    }
+    // The offset only shifts the line along the surface normal, so re-apply it
+    // to the cached mesh hits instead of re-rendering (which would throw away
+    // the drape results and re-raycast the whole route).
+    drapeTargets.forEach(rebuildTargetGeometry);
   }
 
   function setMarkerAltitudeOffset(value) {
     markerAltitudeOffset = value;
 
-    if (lastResponse) {
+    // Markers are only rebuilt by render(); skip it (and the costly re-drape it
+    // triggers) when markers aren't visible.
+    if (showMarkers && lastResponse) {
       render(lastResponse);
     }
   }
@@ -518,7 +588,7 @@ export function createRouteVisualization() {
   function setMarkerRadius(value) {
     markerRadius = value;
 
-    if (lastResponse) {
+    if (showMarkers && lastResponse) {
       render(lastResponse);
     }
   }
