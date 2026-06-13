@@ -21,6 +21,8 @@ import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 
 const MARKER_SEGMENTS = 24;
 const DEG2RAD = Math.PI / 180;
+const ROUTE_LINE_WIDTH = 10; // primary route width, screen pixels
+const ROUTE_ALT_LINE_WIDTH = 7; // alternative route width, screen pixels
 
 // Relative-to-mesh draping: snap the route onto the loaded 3D tiles surface
 // (e.g. bridge decks) so the line stays continuous instead of sinking under
@@ -29,12 +31,12 @@ const DRAPE_SAMPLE_SPACING = 8; // target spacing between draped samples
 const DRAPE_MAX_SUBDIVISIONS = 64; // cap subdivisions per source segment
 const DRAPE_RAY_ABOVE = 300; // start the ray this far above the terrain point
 const DRAPE_RAY_BELOW = 80; // and extend it this far below
-const DRAPE_SPIKE_THRESHOLD = 8; // height deviation that flags an under-crossing
+const DRAPE_MAX_GRADE = 0.15; // max road grade; steeper "climbs" are mesh artifacts
 const DRAPE_INTERVAL = 0.15; // seconds between re-drape passes
 const DRAPE_RAYCAST_BUDGET = 150; // max raycasts per pass, across all routes
 const DRAPE_MAX_DISTANCE = 3000; // only drape samples within this range of camera
 const DRAPE_CAM_EPS_SQ = 1; // camera move (m^2) that triggers a re-drape
-const DRAPE_HEIGHT_EPS = 0.05; // ignore height changes smaller than this (m)
+const DRAPE_HEIGHT_EPS = 0.5; // ignore height changes smaller than this (m)
 
 export function createRouteVisualization() {
   const routeGroup = new Group();
@@ -158,7 +160,7 @@ export function createRouteVisualization() {
         lineGeometry.setPositions(positions);
         const lineMaterial = new LineMaterial({
           color: routeColor,
-          linewidth: routeIndex === 0 ? 6 : 4,
+          linewidth: routeIndex === 0 ? ROUTE_LINE_WIDTH : ROUTE_ALT_LINE_WIDTH,
           worldUnits: false,
           dashed: segment.travelMode === "WALKING",
           dashSize: 12,
@@ -410,6 +412,10 @@ export function createRouteVisualization() {
     }
 
     lastCamPos.copy(drapeCamPos);
+    // Refine existing heights only when tiles actually changed (LOD streamed
+    // in). Plain camera movement just drapes samples that are newly in range,
+    // leaving settled heights untouched so the line doesn't shake while panning.
+    const refine = drapeDirty;
     drapeDirty = false;
     drapePending = false;
 
@@ -437,7 +443,9 @@ export function createRouteVisualization() {
         // Only spend raycasts on samples in view and close enough that the
         // tiles under them are at high detail; far/coarse hits give bad
         // heights, so leave those on the terrain baseline until we approach.
+        const needsDrape = refine || !Number.isFinite(rawHeights[i]);
         if (
+          needsDrape &&
           drapeCamPos.distanceToSquared(sample.basePos) <= maxDistanceSq &&
           frustumContains(sample.basePos)
         ) {
@@ -504,7 +512,7 @@ export function createRouteVisualization() {
   function rebuildTargetGeometry(target) {
     const { samples, rawHeights, work, positions } = target;
     work.set(rawHeights);
-    fillAndSmoothHeights(work);
+    fillAndSmoothHeights(work, samples);
 
     for (let i = 0; i < samples.length; i++) {
       const sample = samples[i];
@@ -521,7 +529,7 @@ export function createRouteVisualization() {
     target.line.computeLineDistances();
   }
 
-  function fillAndSmoothHeights(heights) {
+  function fillAndSmoothHeights(heights, samples) {
     const n = heights.length;
 
     // 1) Fill samples with no mesh hit by interpolating between valid neighbors.
@@ -545,25 +553,21 @@ export function createRouteVisualization() {
     }
     for (let k = prev + 1; k < n; k++) heights[k] = heights[prev];
 
-    // 2) Drop spikes: where the route passes under a crossing overpass the
-    //    top-down ray grabs the upper deck. Pull such outliers back to the
-    //    local median so the line stays on its own road.
-    const window = 2;
-    for (let pass = 0; pass < 2; pass++) {
-      const source = heights.slice();
-      for (let i = 0; i < n; i++) {
-        const lo = Math.max(0, i - window);
-        const hi = Math.min(n - 1, i + window);
-        const neighborhood = [];
-        for (let k = lo; k <= hi; k++) {
-          if (k !== i) neighborhood.push(source[k]);
-        }
-        neighborhood.sort((a, b) => a - b);
-        const median = neighborhood[Math.floor(neighborhood.length / 2)];
-        if (Math.abs(source[i] - median) > DRAPE_SPIKE_THRESHOLD) {
-          heights[i] = median;
-        }
-      }
+    // 2) Slope-limited "cone erosion". Where the route passes UNDER a crossing
+    //    overpass the top-down ray grabs the upper deck, producing a plateau
+    //    joined to the real road by impossibly steep jumps. A road's height
+    //    can't change faster than DRAPE_MAX_GRADE, so pull down any height that
+    //    isn't reachable from its neighbors within that grade. Because it's
+    //    anchored from both directions, a genuine bridge the route drives onto
+    //    (gentle ramps either side) is preserved, while an under-crossing
+    //    (road stays low on both sides) gets flattened back down — at any width.
+    for (let i = 1; i < n; i++) {
+      const d = samples[i].terrainPos.distanceTo(samples[i - 1].terrainPos);
+      heights[i] = Math.min(heights[i], heights[i - 1] + DRAPE_MAX_GRADE * d);
+    }
+    for (let i = n - 2; i >= 0; i--) {
+      const d = samples[i].terrainPos.distanceTo(samples[i + 1].terrainPos);
+      heights[i] = Math.min(heights[i], heights[i + 1] + DRAPE_MAX_GRADE * d);
     }
   }
 

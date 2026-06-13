@@ -70,7 +70,7 @@ const params = {
   longitude: 0,
   altitude: 9000000,
   autoUpdate: true,
-  routeAltitudeOffset: 0,
+  routeAltitudeOffset: 2,
   routeMarkerAltitudeOffset: 6,
   routeMarkerRadius: 4,
   showMarkers: false,
