@@ -51,6 +51,10 @@ let isTouring = false;
 let tourProgress = 0;      // Distance progress in meters
 let tourAnimationId = null;
 let currentTourHeading = null;
+let smoothCameraCenter = null;
+let smoothHeading = null;
+let smoothTilt = null;
+let smoothRange = null;
 
 // Autocomplete States
 const autocompleteState = {
@@ -88,6 +92,8 @@ const selectTourSpeed = document.getElementById("select-tour-speed");
 const selectTourView = document.getElementById("select-tour-view");
 const rangeTourAltitude = document.getElementById("range-tour-altitude");
 const labelTourAltitude = document.getElementById("label-tour-altitude");
+const rangeCameraSuspension = document.getElementById("range-camera-suspension");
+const labelCameraSuspension = document.getElementById("label-camera-suspension");
 
 const apiKey = import.meta.env.VITE_GOOGLE_MAPS_JS_API_KEY;
 if (!apiKey) {
@@ -289,6 +295,12 @@ function setupEventListeners() {
   if (rangeTourAltitude && labelTourAltitude) {
     rangeTourAltitude.addEventListener("input", (e) => {
       labelTourAltitude.innerText = `${e.target.value}m`;
+    });
+  }
+
+  if (rangeCameraSuspension && labelCameraSuspension) {
+    rangeCameraSuspension.addEventListener("input", (e) => {
+      labelCameraSuspension.innerText = `${e.target.value}%`;
     });
   }
 
@@ -693,6 +705,10 @@ function startTour() {
   isTouring = true;
   tourProgress = 0;
   currentTourHeading = null; // Reset tour heading smoothing on start
+  smoothCameraCenter = null;
+  smoothHeading = null;
+  smoothTilt = null;
+  smoothRange = null;
 
   // Toggle button states (disable tour button while aligning)
   btnOrbit.disabled = true;
@@ -743,6 +759,10 @@ function startTour() {
         btnTour.innerHTML = `<span style="display:inline-block; animation:spin 2s infinite linear; margin-right:4px;">🚗</span> Touring...`;
       }
       currentTourHeading = startHeading;
+      smoothCameraCenter = { lat: p1.lat, lng: p1.lng, altitude: targetCenter.altitude };
+      smoothHeading = startHeading;
+      smoothTilt = targetTilt;
+      smoothRange = targetRange;
       tourAnimationId = requestAnimationFrame(animateTour);
     }
   };
@@ -756,6 +776,13 @@ function stopTour() {
     cancelAnimationFrame(tourAnimationId);
     tourAnimationId = null;
   }
+
+  // Reset smooth camera states
+  smoothCameraCenter = null;
+  smoothHeading = null;
+  smoothTilt = null;
+  smoothRange = null;
+  currentTourHeading = null;
 
   // Halt camera flight if alignment is still running
   if (mapElement) {
@@ -805,13 +832,6 @@ function animateTour() {
   // Calculate target heading directly towards the look-ahead point
   const targetHeading = getHeading(lat, lng, aheadPos.lat, aheadPos.lng);
 
-  if (currentTourHeading === null) {
-    currentTourHeading = targetHeading;
-  } else {
-    // Use highly responsive smoothing to prevent jitters without lagging behind movement
-    currentTourHeading = interpolateHeading(currentTourHeading, targetHeading, 0.15);
-  }
-
   // Read routing altitude setting
   const altitude = parseFloat(selectPolyAltVal.value) || 0;
 
@@ -833,12 +853,32 @@ function animateTour() {
     targetRange = tourHeightOffset * 2.2; // Zoom range relative to slider value
   }
 
+  // Read camera suspension/gimbal smoothing factor from slider (default 90%, yielding k = 0.1)
+  const suspensionVal = rangeCameraSuspension ? parseFloat(rangeCameraSuspension.value) : 90;
+  // Map suspension percentage (0 to 98) to low-pass coefficient k (1.0 to 0.02)
+  // High percentage means high smoothing (small k = very soft/gentle suspension)
+  // Low percentage means low smoothing (large k = very stiff/immediate camera)
+  const k = Math.max(1.0 - (suspensionVal / 100), 0.02);
+  if (smoothCameraCenter === null) {
+    smoothCameraCenter = { lat, lng, altitude: targetAltitude };
+    smoothHeading = targetHeading;
+    smoothTilt = targetTilt;
+    smoothRange = targetRange;
+  } else {
+    smoothCameraCenter.lat += (lat - smoothCameraCenter.lat) * k;
+    smoothCameraCenter.lng += (lng - smoothCameraCenter.lng) * k;
+    smoothCameraCenter.altitude += (targetAltitude - smoothCameraCenter.altitude) * k;
+    smoothHeading = interpolateHeading(smoothHeading, targetHeading, k);
+    smoothTilt += (targetTilt - smoothTilt) * k;
+    smoothRange += (targetRange - smoothRange) * k;
+  }
+
   mapElement.flyCameraTo({
     endCamera: {
-      center: { lat, lng, altitude: targetAltitude },
-      heading: currentTourHeading,
-      tilt: targetTilt,
-      range: targetRange,
+      center: smoothCameraCenter,
+      heading: smoothHeading,
+      tilt: smoothTilt,
+      range: smoothRange,
       altitudeMode: cameraAltMode
     },
     durationMillis: 0
