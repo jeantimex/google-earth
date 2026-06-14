@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Google Maps 3D Explorer</title>
+    <link rel="stylesheet" href="/src/map3d.css" />
+</head>
+<body>
+    <div id="app-container">
+        <!-- Sidebar HUD -->
+        <div id="hud-panel">
+            <header>
+                <h1>3D Map Explorer</h1>
+                <p>Experience the world in photorealistic 3D via Google Maps JS API</p>
+            </header>
+
+            <!-- Destination Quick Selector -->
+            <div class="hud-section">
+                <div class="control-group">
+                    <label for="select-destination">Quick Destination</label>
+                    <select id="select-destination">
+                        <option value="sf" selected>San Francisco, California, USA</option>
+                        <option value="nyc">Manhattan, New York, USA</option>
+                        <option value="paris">Eiffel Tower, Paris, France</option>
+                        <option value="fuji">Mount Fuji, Honshu, Japan</option>
+                        <option value="canyon">Grand Canyon, Arizona, USA</option>
+                        <option value="sydney">Sydney Opera House, Sydney, Australia</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Route Planner -->
+            <div class="hud-section">
+                <h3>Route Planner</h3>
+                
+                <div class="input-group">
+                    <label for="input-origin">Origin</label>
+                    <input id="input-origin" type="text" placeholder="Enter starting point..." autocomplete="off" spellcheck="false" />
+                    <div id="origin-suggestions" class="autocomplete-suggestions"></div>
+                </div>
+
+                <div class="input-group">
+                    <label for="input-destination">Destination</label>
+                    <input id="input-destination" type="text" placeholder="Enter endpoint..." autocomplete="off" spellcheck="false" />
+                    <div id="destination-suggestions" class="autocomplete-suggestions"></div>
+                </div>
+
+                <div class="route-actions">
+                    <button id="btn-draw-route" class="ctrl-btn">Draw Route</button>
+                    <button id="btn-clear-route" class="ctrl-btn">Clear</button>
+                </div>
+
+                <div class="settings-grid">
+                    <div class="control-group">
+                        <label for="select-poly-alt-mode">Altitude Mode</label>
+                        <select id="select-poly-alt-mode">
+                            <option value="CLAMP_TO_GROUND" selected>Clamp To Ground</option>
+                            <option value="RELATIVE_TO_GROUND">Relative To Ground</option>
+                            <option value="RELATIVE_TO_MESH">Relative To Mesh</option>
+                            <option value="ABSOLUTE">Absolute</option>
+                        </select>
+                    </div>
+                    <div class="control-group">
+                        <label for="select-poly-alt-val">Altitude</label>
+                        <select id="select-poly-alt-val">
+                            <option value="0" selected>0m</option>
+                            <option value="10">10m</option>
+                            <option value="30">30m</option>
+                            <option value="50">50m</option>
+                            <option value="100">100m</option>
+                            <option value="200">200m</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Camera Controls -->
+            <div class="hud-section">
+                <h3>Camera Controls</h3>
+                <div class="controls-row">
+                    <button id="btn-orbit" class="ctrl-btn">
+                        <svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12C20,13.62 19.5,15.14 18.67,16.4L16.29,14.03C16.74,13.43 17,12.75 17,12A5,5 0 0,0 12,7C11.25,7 10.57,7.26 9.97,7.71L7.6,5.33C8.86,4.5 10.38,4 12,4M12,9A3,3 0 0,1 15,12C15,12.72 14.72,13.38 14.28,13.88L13.88,14.28C13.38,14.72 12.72,15 12,15A3,3 0 0,1 9,12C9,11.28 9.28,10.62 9.72,10.12L10.12,9.72C10.62,9.28 11.28,9 12,9M12,17A5,5 0 0,0 14.03,16.29L16.4,18.67C15.14,19.5 13.62,20 12,20A8,8 0 0,1 4,12C4,10.38 4.5,8.86 5.33,7.6L7.71,9.97C7.26,10.57 7,11.25 7,12A5,5 0 0,0 12,17Z"/></svg>
+                        Start Orbit
+                    </button>
+                    <button id="btn-stop" class="ctrl-btn" disabled>
+                        <svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M18,18H6V6H18V18Z"/></svg>
+                        Stop Animation
+                    </button>
+                </div>
+                <div class="control-group">
+                    <label for="select-mode">Map Rendering Mode</label>
+                    <select id="select-mode">
+                        <option value="HYBRID" selected>Hybrid (Satellite + Labels)</option>
+                        <option value="SATELLITE">Satellite (Pure Imagery)</option>
+                        <option value="ROADMAP">Roadmap (Vector)</option>
+                    </select>
+                </div>
+            </div>
+
+            <footer>
+                <a href="/" class="back-link">
+                    <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24"><path fill="currentColor" d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z"/></svg>
+                    3D Tiles Demo
+                </a>
+                <span style="font-size: 11px; color: #4a5568;">v1.0.0</span>
+            </footer>
+        </div>
+
+        <!-- Map container using flex layout taking whole viewport -->
+        <div id="map-container">
+            <div id="loading-spinner">
+                <div class="spinner"></div>
+                <p>Initializing Google Maps 3D...</p>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="/src/map3d.js"></script>
+</body>
+</html>

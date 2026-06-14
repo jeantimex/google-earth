@@ -1,0 +1,474 @@
+/* Import Google Font Outfit */
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap');
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background-color: #0b0c10;
+  color: #f0f3f8;
+}
+
+#app-container {
+  display: flex;
+  flex-direction: row;
+  width: 100vw;
+  height: 100vh;
+  position: relative;
+}
+
+/* Sidebar HUD Panel */
+#hud-panel {
+  width: 380px;
+  height: 100%;
+  background: rgba(11, 12, 16, 0.85);
+  backdrop-filter: blur(25px);
+  -webkit-backdrop-filter: blur(25px);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  padding: 28px;
+  box-shadow: 10px 0 35px rgba(0, 0, 0, 0.6);
+  z-index: 10;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+
+/* Header style */
+header {
+  margin-bottom: 24px;
+}
+
+header h1 {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  background: linear-gradient(135deg, #64ffda 0%, #00b0ff 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 6px;
+}
+
+header p {
+  font-size: 13px;
+  color: #8a99ad;
+  font-weight: 300;
+  line-height: 1.4;
+}
+
+/* HUD sections */
+.hud-section {
+  margin-bottom: 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  padding-bottom: 20px;
+}
+
+.hud-section:last-of-type {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.hud-section h3 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: #64ffda;
+  margin-bottom: 12px;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+/* Destination List & Buttons */
+.destination-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dest-btn {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  color: #f0f3f8;
+  width: 100%;
+  outline: none;
+}
+
+.dest-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(100, 255, 218, 0.35);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+}
+
+.dest-btn.active {
+  background: rgba(100, 255, 218, 0.08);
+  border-color: #64ffda;
+  box-shadow: 0 0 12px rgba(100, 255, 218, 0.12);
+}
+
+.dest-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: #ffffff;
+}
+
+.dest-sub {
+  font-size: 11px;
+  color: #8a99ad;
+  margin-top: 2px;
+}
+
+/* Autocomplete inputs and group */
+.input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+  position: relative;
+}
+
+.input-group label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #8a99ad;
+  font-weight: 600;
+}
+
+.input-group input {
+  background: #171923;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 11px 14px;
+  color: #f0f3f8;
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: all 0.2s;
+  width: 100%;
+}
+
+.input-group input:focus {
+  border-color: #64ffda;
+  box-shadow: 0 0 10px rgba(100, 255, 218, 0.15);
+}
+
+/* Suggestions dropdown */
+.autocomplete-suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: rgba(23, 25, 35, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  margin-top: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+  z-index: 100;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+  display: none;
+}
+
+.suggestion-item {
+  padding: 10px 14px;
+  font-size: 12.5px;
+  cursor: pointer;
+  color: #e2e8f0;
+  transition: background 0.15s;
+  text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.suggestion-item:last-child {
+  border-bottom: none;
+}
+
+.suggestion-item:hover {
+  background: rgba(100, 255, 218, 0.12);
+  color: #64ffda;
+}
+
+/* Route actions */
+.route-actions {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+#btn-draw-route {
+  flex: 2;
+  background: #64ffda;
+  color: #0b0c10;
+  border: none;
+}
+
+#btn-draw-route:hover:not(:disabled) {
+  background: #52e0bd;
+  box-shadow: 0 4px 12px rgba(100, 255, 218, 0.25);
+  transform: translateY(-1px);
+}
+
+#btn-clear-route {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+/* Settings Grid */
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+/* Checkbox group */
+.checkbox-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.checkbox-group input {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: #64ffda;
+}
+
+.checkbox-group label {
+  font-size: 12px;
+  color: #f0f3f8;
+  cursor: pointer;
+  user-select: none;
+  font-weight: 500;
+}
+
+/* Controls */
+.controls-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.ctrl-btn {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: #f0f3f8;
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  outline: none;
+}
+
+.ctrl-btn:not(:disabled):hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.18);
+  transform: translateY(-1px);
+}
+
+.ctrl-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+#btn-orbit:not(:disabled):hover {
+  background: rgba(100, 255, 218, 0.12);
+  border-color: #64ffda;
+  color: #64ffda;
+  box-shadow: 0 4px 12px rgba(100, 255, 218, 0.1);
+}
+
+.icon {
+  width: 18px;
+  height: 18px;
+}
+
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.control-group label {
+  font-size: 11px;
+  color: #8a99ad;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.control-group select {
+  background: #171923;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 10px;
+  color: #f0f3f8;
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  cursor: pointer;
+  transition: all 0.2s;
+  width: 100%;
+}
+
+.control-group select:focus {
+  border-color: #64ffda;
+  box-shadow: 0 0 10px rgba(100, 255, 218, 0.15);
+}
+
+/* Footer & Back Link */
+footer {
+  margin-top: auto;
+  padding-top: 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.back-link {
+  font-size: 13px;
+  color: #8a99ad;
+  text-decoration: none;
+  transition: color 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.back-link:hover {
+  color: #64ffda;
+}
+
+/* Map Container */
+#map-container {
+  flex: 1;
+  height: 100%;
+  position: relative;
+  background-color: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+gmp-map-3d {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Loading Spinner */
+#loading-spinner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  z-index: 5;
+  pointer-events: none;
+  transition: opacity 0.5s ease;
+}
+
+.spinner {
+  width: 44px;
+  height: 44px;
+  border: 3px solid rgba(100, 255, 218, 0.1);
+  border-top-color: #64ffda;
+  border-radius: 50%;
+  animation: spin 1s infinite linear;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+#loading-spinner p {
+  font-size: 14px;
+  color: #8a99ad;
+  font-weight: 400;
+  letter-spacing: 0.5px;
+}
+
+/* Mobile responsive adjustments */
+@media (max-width: 768px) {
+  #app-container {
+    flex-direction: column-reverse;
+  }
+  #hud-panel {
+    width: 100%;
+    height: 50%;
+    border-right: none;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.5);
+    padding: 16px;
+  }
+  #map-container {
+    height: 50%;
+    flex: none;
+  }
+  header {
+    margin-bottom: 12px;
+  }
+  header h1 {
+    font-size: 18px;
+  }
+  .hud-section {
+    margin-bottom: 14px;
+    padding-bottom: 12px;
+  }
+  .destination-list {
+    flex-direction: row;
+    overflow-x: auto;
+    padding-bottom: 6px;
+    gap: 6px;
+  }
+  .dest-btn {
+    flex-shrink: 0;
+    width: auto;
+    padding: 8px 12px;
+  }
+  .dest-name {
+    font-size: 12px;
+  }
+  .dest-sub {
+    font-size: 9px;
+  }
+  .settings-grid {
+    margin-bottom: 8px;
+  }
+  footer {
+    padding-top: 8px;
+    margin-top: 8px;
+  }
+}
