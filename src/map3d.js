@@ -96,6 +96,8 @@ const rangeTourAltitude = document.getElementById("range-tour-altitude");
 const labelTourAltitude = document.getElementById("label-tour-altitude");
 const rangeCameraSuspension = document.getElementById("range-camera-suspension");
 const labelCameraSuspension = document.getElementById("label-camera-suspension");
+const rangeTurnSmoothness = document.getElementById("range-turn-smoothness");
+const labelTurnSmoothness = document.getElementById("label-turn-smoothness");
 
 const chaseCamSettings = document.getElementById("chase-cam-settings");
 const rangeChaseDistance = document.getElementById("range-chase-distance");
@@ -313,6 +315,12 @@ function setupEventListeners() {
   if (rangeCameraSuspension && labelCameraSuspension) {
     rangeCameraSuspension.addEventListener("input", (e) => {
       labelCameraSuspension.innerText = `${e.target.value}%`;
+    });
+  }
+
+  if (rangeTurnSmoothness && labelTurnSmoothness) {
+    rangeTurnSmoothness.addEventListener("input", (e) => {
+      labelTurnSmoothness.innerText = `${e.target.value}%`;
     });
   }
 
@@ -714,7 +722,7 @@ function getCameraAltitudeMode() {
 function getPositionAtDistance(progress) {
   let targetProgress = progress;
   if (targetProgress >= totalPathDistance) {
-    targetProgress = targetProgress % totalPathDistance;
+    targetProgress = totalPathDistance;
   }
   if (targetProgress < 0) {
     targetProgress = 0;
@@ -888,9 +896,11 @@ function animateTour(timestamp) {
 
   tourProgress += speedMPS * dt;
 
-  // Loop route when tour ends
+  // Clamp route to the end when tour ends
+  let reachedEnd = false;
   if (tourProgress >= totalPathDistance) {
-    tourProgress = 0;
+    tourProgress = totalPathDistance;
+    reachedEnd = true;
   }
 
   // Get current position at progress
@@ -900,10 +910,18 @@ function animateTour(timestamp) {
 
   // Look-ahead distance: default 25 meters, scales up with speed for smooth leading curves
   const lookAheadDistance = Math.max(speedMPS * dt * 25, 25);
-  const aheadPos = getPositionAtDistance(tourProgress + lookAheadDistance);
-
-  // Calculate target heading directly towards the look-ahead point
-  const targetHeading = getHeading(lat, lng, aheadPos.lat, aheadPos.lng);
+  
+  // Calculate target heading directly towards the look-ahead point, or maintain final segment heading near the end
+  let targetHeading;
+  if (tourProgress + lookAheadDistance < totalPathDistance) {
+    const aheadPos = getPositionAtDistance(tourProgress + lookAheadDistance);
+    targetHeading = getHeading(lat, lng, aheadPos.lat, aheadPos.lng);
+  } else {
+    // Near the end: use the last segment's heading direction to prevent rotation anomalies
+    const pEnd = getCoordinate(lastRoutePath[lastRoutePath.length - 1]);
+    const pPenultimate = getCoordinate(lastRoutePath[lastRoutePath.length - 2]);
+    targetHeading = getHeading(pPenultimate.lat, pPenultimate.lng, pEnd.lat, pEnd.lng);
+  }
 
   // Read routing altitude setting
   const altitude = parseFloat(selectPolyAltVal.value) || 0;
@@ -938,14 +956,15 @@ function animateTour(timestamp) {
   // Base smoothing factor k for translation (position)
   const k = Math.max(1.0 - (suspensionVal / 100), 0.02);
   
+  // Read turn smoothness slider (default 97%, yielding kHeading = 0.03)
+  const turnSmoothnessVal = rangeTurnSmoothness ? parseFloat(rangeTurnSmoothness.value) : 97;
+  // Map turn smoothness percentage (0 to 99) to yaw interpolation coefficient kHeading (1.0 to 0.01)
+  const kHeading = Math.max(1.0 - (turnSmoothnessVal / 100), 0.01);
+
   // We damp altitude turning even further to avoid any vertical bumps/dips
   // Roads have very gradual slopes, but DTM data can have high-frequency noise.
   // Using a very small coefficient for altitude creates a vertical glide-cam effect.
   const kAltitude = k * 0.15;
-
-  // We damp heading turning even further to guarantee buttery-smooth rotations (gimbal effect)
-  // Yaw rotation is highly sensitive to jerky movements, so we damp it by a factor of 0.3
-  const kHeading = k * 0.3;
 
   if (smoothCameraCenter === null) {
     smoothCameraCenter = { lat, lng, altitude: targetAltitude };
@@ -971,6 +990,37 @@ function animateTour(timestamp) {
     },
     durationMillis: 0
   });
+
+  // If we reached the end of the tour, check if camera has converged close enough to the destination
+  if (reachedEnd) {
+    const horizontalDist = getHaversineDistance(smoothCameraCenter.lat, smoothCameraCenter.lng, lat, lng);
+    const altDiff = Math.abs(smoothCameraCenter.altitude - targetAltitude);
+    let headingDiff = Math.abs(smoothHeading - finalTargetHeading);
+    if (headingDiff > 180) headingDiff = 360 - headingDiff;
+
+    // Once we are within a tiny threshold, stop the tour at the destination
+    if (horizontalDist < 0.1 && altDiff < 0.1 && headingDiff < 0.5) {
+      // Force exact target values to eliminate any residual offset
+      smoothCameraCenter.lat = lat;
+      smoothCameraCenter.lng = lng;
+      smoothCameraCenter.altitude = targetAltitude;
+      smoothHeading = finalTargetHeading;
+      
+      mapElement.flyCameraTo({
+        endCamera: {
+          center: smoothCameraCenter,
+          heading: smoothHeading,
+          tilt: smoothTilt,
+          range: smoothRange,
+          altitudeMode: cameraAltMode
+        },
+        durationMillis: 0
+      });
+
+      stopTour();
+      return;
+    }
+  }
 
   tourAnimationId = requestAnimationFrame(animateTour);
 }
