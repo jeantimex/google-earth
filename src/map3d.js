@@ -97,6 +97,16 @@ const labelTourAltitude = document.getElementById("label-tour-altitude");
 const rangeCameraSuspension = document.getElementById("range-camera-suspension");
 const labelCameraSuspension = document.getElementById("label-camera-suspension");
 
+const chaseCamSettings = document.getElementById("chase-cam-settings");
+const rangeChaseDistance = document.getElementById("range-chase-distance");
+const labelChaseDistance = document.getElementById("label-chase-distance");
+const rangeChaseHeight = document.getElementById("range-chase-height");
+const labelChaseHeight = document.getElementById("label-chase-height");
+const rangeChaseHeading = document.getElementById("range-chase-heading");
+const labelChaseHeading = document.getElementById("label-chase-heading");
+const rangeChaseTilt = document.getElementById("range-chase-tilt");
+const labelChaseTilt = document.getElementById("label-chase-tilt");
+
 const apiKey = import.meta.env.VITE_GOOGLE_MAPS_JS_API_KEY;
 if (!apiKey) {
   const errorMsg = "Missing VITE_GOOGLE_MAPS_JS_API_KEY. Please specify it in your .env file.";
@@ -317,6 +327,42 @@ function setupEventListeners() {
   // Redraw polyline dynamically when settings change
   selectPolyAltMode.addEventListener("change", updatePolylineFromSettings);
   selectPolyAltVal.addEventListener("change", updatePolylineFromSettings);
+
+  // Toggle Chase Cam settings panel dynamically based on selectTourView value
+  if (selectTourView && chaseCamSettings) {
+    selectTourView.addEventListener("change", () => {
+      if (selectTourView.value === "tp") {
+        chaseCamSettings.style.display = "block";
+      } else {
+        chaseCamSettings.style.display = "none";
+      }
+    });
+  }
+
+  // Chase Cam sliders listeners
+  if (rangeChaseDistance && labelChaseDistance) {
+    rangeChaseDistance.addEventListener("input", (e) => {
+      labelChaseDistance.innerText = `${e.target.value}m`;
+    });
+  }
+
+  if (rangeChaseHeight && labelChaseHeight) {
+    rangeChaseHeight.addEventListener("input", (e) => {
+      labelChaseHeight.innerText = `${e.target.value}m`;
+    });
+  }
+
+  if (rangeChaseHeading && labelChaseHeading) {
+    rangeChaseHeading.addEventListener("input", (e) => {
+      labelChaseHeading.innerText = `${e.target.value}°`;
+    });
+  }
+
+  if (rangeChaseTilt && labelChaseTilt) {
+    rangeChaseTilt.addEventListener("input", (e) => {
+      labelChaseTilt.innerText = `${e.target.value}°`;
+    });
+  }
 }
 
 function flyTo(destKey) {
@@ -739,11 +785,20 @@ function startTour() {
   const viewType = selectTourView ? selectTourView.value : "fp";
   const tourHeightOffset = rangeTourAltitude ? parseFloat(rangeTourAltitude.value) : 10;
 
-  let targetCenter, targetTilt, targetRange;
+  let targetCenter, targetTilt, targetRange, targetHeadingVal;
+  targetHeadingVal = startHeading;
+
   if (viewType === "tp") {
-    targetCenter = { lat: p1.lat, lng: p1.lng, altitude: altitude + (tourHeightOffset * 1.5) };
-    targetTilt = 65;
-    targetRange = tourHeightOffset * 2.2;
+    // Read Chase Cam specific settings
+    const chaseDistance = rangeChaseDistance ? parseFloat(rangeChaseDistance.value) : 50;
+    const chaseHeight = rangeChaseHeight ? parseFloat(rangeChaseHeight.value) : 15;
+    const chaseHeadingOffset = rangeChaseHeading ? parseFloat(rangeChaseHeading.value) : 0;
+    const chaseTilt = rangeChaseTilt ? parseFloat(rangeChaseTilt.value) : 65;
+
+    targetCenter = { lat: p1.lat, lng: p1.lng, altitude: altitude + chaseHeight };
+    targetTilt = chaseTilt;
+    targetRange = chaseDistance;
+    targetHeadingVal = (startHeading + chaseHeadingOffset + 360) % 360;
   } else {
     targetCenter = { lat: p1.lat, lng: p1.lng, altitude: altitude + tourHeightOffset };
     targetTilt = 80;
@@ -754,7 +809,7 @@ function startTour() {
   mapElement.flyCameraTo({
     endCamera: {
       center: targetCenter,
-      heading: startHeading,
+      heading: targetHeadingVal,
       tilt: targetTilt,
       range: targetRange,
       altitudeMode: getCameraAltitudeMode()
@@ -769,9 +824,9 @@ function startTour() {
         btnTour.disabled = false;
         btnTour.innerHTML = `<span style="display:inline-block; animation:spin 2s infinite linear; margin-right:4px;">🚗</span> Touring...`;
       }
-      currentTourHeading = startHeading;
+      currentTourHeading = targetHeadingVal;
       smoothCameraCenter = { lat: p1.lat, lng: p1.lng, altitude: targetCenter.altitude };
-      smoothHeading = startHeading;
+      smoothHeading = targetHeadingVal;
       smoothTilt = targetTilt;
       smoothRange = targetRange;
       tourAnimationId = requestAnimationFrame(animateTour);
@@ -858,17 +913,23 @@ function animateTour(timestamp) {
 
   // Read tour camera height offset dynamically from slider (default 10m now)
   const tourHeightOffset = rangeTourAltitude ? parseFloat(rangeTourAltitude.value) : 10;
-
   const cameraAltMode = getCameraAltitudeMode();
   let targetAltitude = altitude + tourHeightOffset;
   let targetTilt = 80;
   let targetRange = 0.1;
+  let finalTargetHeading = targetHeading;
 
   if (viewType === "tp") {
-    // Chase Cam (Third-person follow) dynamically positioned relative to camera height
-    targetAltitude = altitude + (tourHeightOffset * 1.5);
-    targetTilt = 65;
-    targetRange = tourHeightOffset * 2.2; // Zoom range relative to slider value
+    // Read Chase Cam specific settings
+    const chaseDistance = rangeChaseDistance ? parseFloat(rangeChaseDistance.value) : 50;
+    const chaseHeight = rangeChaseHeight ? parseFloat(rangeChaseHeight.value) : 15;
+    const chaseHeadingOffset = rangeChaseHeading ? parseFloat(rangeChaseHeading.value) : 0;
+    const chaseTilt = rangeChaseTilt ? parseFloat(rangeChaseTilt.value) : 65;
+
+    targetAltitude = altitude + chaseHeight;
+    targetTilt = chaseTilt;
+    targetRange = chaseDistance;
+    finalTargetHeading = (targetHeading + chaseHeadingOffset + 360) % 360;
   }
 
   // Read camera suspension/gimbal smoothing factor from slider (default 90%, yielding k = 0.1)
@@ -888,14 +949,14 @@ function animateTour(timestamp) {
 
   if (smoothCameraCenter === null) {
     smoothCameraCenter = { lat, lng, altitude: targetAltitude };
-    smoothHeading = targetHeading;
+    smoothHeading = finalTargetHeading;
     smoothTilt = targetTilt;
     smoothRange = targetRange;
   } else {
     smoothCameraCenter.lat += (lat - smoothCameraCenter.lat) * k;
     smoothCameraCenter.lng += (lng - smoothCameraCenter.lng) * k;
     smoothCameraCenter.altitude += (targetAltitude - smoothCameraCenter.altitude) * kAltitude;
-    smoothHeading = interpolateHeading(smoothHeading, targetHeading, kHeading);
+    smoothHeading = interpolateHeading(smoothHeading, finalTargetHeading, kHeading);
     smoothTilt += (targetTilt - smoothTilt) * k;
     smoothRange += (targetRange - smoothRange) * k;
   }

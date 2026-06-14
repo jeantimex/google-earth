@@ -104,6 +104,41 @@
                     </select>
                 </div>
 
+                <!-- Chase Cam specific settings, toggled dynamically -->
+                <div id="chase-cam-settings" style="display: none; border-left: 2px solid #64ffda; padding-left: 10px; margin-top: 10px; margin-bottom: 10px;">
+                    <div class="control-group" style="margin-bottom: 8px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <label for="range-chase-distance">Chase Distance</label>
+                            <span id="label-chase-distance" style="font-size: 12px; color: #64ffda; font-weight: 600;">50m</span>
+                        </div>
+                        <input type="range" id="range-chase-distance" min="5" max="300" step="5" value="50" />
+                    </div>
+
+                    <div class="control-group" style="margin-bottom: 8px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <label for="range-chase-height">Chase Height Offset</label>
+                            <span id="label-chase-height" style="font-size: 12px; color: #64ffda; font-weight: 600;">15m</span>
+                        </div>
+                        <input type="range" id="range-chase-height" min="0" max="150" step="5" value="15" />
+                    </div>
+
+                    <div class="control-group" style="margin-bottom: 8px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <label for="range-chase-heading">Chase Heading Offset</label>
+                            <span id="label-chase-heading" style="font-size: 12px; color: #64ffda; font-weight: 600;">0°</span>
+                        </div>
+                        <input type="range" id="range-chase-heading" min="-180" max="180" step="5" value="0" />
+                    </div>
+
+                    <div class="control-group" style="margin-bottom: 8px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <label for="range-chase-tilt">Chase Tilt Angle</label>
+                            <span id="label-chase-tilt" style="font-size: 12px; color: #64ffda; font-weight: 600;">65°</span>
+                        </div>
+                        <input type="range" id="range-chase-tilt" min="30" max="85" step="5" value="65" />
+                    </div>
+                </div>
+
                 <div class="control-group" style="margin-top: 12px; margin-bottom: 8px;">
                     <div style="display: flex; justify-content: space-between; align-items: center;">
                         <label for="range-tour-speed">Tour Speed</label>
