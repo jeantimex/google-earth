@@ -45,9 +45,12 @@ let isOrbiting = false;
 let isTransitioning = false;
 let activePolyline = null;
 let lastRoutePath = null; // Stored path coordinate lat/lng points to support dynamic redraws
+let pathDistances = [];   // Cumulative distances along route segments in meters
+let totalPathDistance = 0; // Total length of route in meters
 let isTouring = false;
-let tourProgress = 0;
+let tourProgress = 0;      // Distance progress in meters
 let tourAnimationId = null;
+let currentTourHeading = null;
 
 // Autocomplete States
 const autocompleteState = {
@@ -425,6 +428,7 @@ async function drawRoute() {
 
     // Store the path coordinates globally to allow live settings changes
     lastRoutePath = route.path;
+    precomputePathDistances(route.path);
 
     // Render polyline
     await renderPolyline(route.path);
@@ -542,29 +546,41 @@ function fitCameraToPath(path) {
 
   let minLat = Infinity, maxLat = -Infinity;
   let minLng = Infinity, maxLng = -Infinity;
+  let sumLat = 0, sumLng = 0, sumAlt = 0;
 
   path.forEach(pt => {
     if (pt.lat < minLat) minLat = pt.lat;
     if (pt.lat > maxLat) maxLat = pt.lat;
     if (pt.lng < minLng) minLng = pt.lng;
     if (pt.lng > maxLng) maxLng = pt.lng;
+
+    sumLat += pt.lat;
+    sumLng += pt.lng;
+    sumAlt += pt.altitude;
   });
 
-  const centerLat = (minLat + maxLat) / 2;
-  const centerLng = (minLng + maxLng) / 2;
+  const centerLat = sumLat / path.length;
+  const centerLng = sumLng / path.length;
+  const centerAlt = sumAlt / path.length;
 
   // Calculate diagonal distance between corners
   const diagonalDistance = getHaversineDistance(minLat, minLng, maxLat, maxLng);
 
-  // Set the camera range proportional to the route span (with 1.4 multiplier for padding)
-  const computedRange = Math.max(diagonalDistance * 1.4, 600);
+  // Set the camera range proportional to the route span (with 2.0 multiplier for padding to prevent bottom cutoff due to 45-degree tilt)
+  const computedRange = Math.max(diagonalDistance * 2.0, 1000);
+
+  // Compute overall heading of the route to align camera along the travel direction
+  const startPt = path[0];
+  const endPt = path[path.length - 1];
+  const overallHeading = getHeading(startPt.lat, startPt.lng, endPt.lat, endPt.lng);
 
   mapElement.flyCameraTo({
     endCamera: {
-      center: { lat: centerLat, lng: centerLng, altitude: 0 },
+      center: { lat: centerLat, lng: centerLng, altitude: centerAlt },
       range: computedRange,
       tilt: 45, // Angle view to show depth
-      heading: 0
+      heading: overallHeading,
+      altitudeMode: getCameraAltitudeMode()
     },
     durationMillis: 4000
   });
@@ -612,6 +628,60 @@ function getHeading(lat1, lng1, lat2, lng2) {
   return (brng + 360) % 360; // return bearing in 0-360 degrees
 }
 
+function interpolateHeading(current, target, lerpFactor) {
+  let diff = target - current;
+  while (diff < -180) diff += 360;
+  while (diff > 180) diff -= 360;
+  return (current + diff * lerpFactor + 360) % 360;
+}
+
+function getCameraAltitudeMode() {
+  const routeAltMode = selectPolyAltMode ? selectPolyAltMode.value : "CLAMP_TO_GROUND";
+  if (routeAltMode === "CLAMP_TO_GROUND") {
+    return "RELATIVE_TO_GROUND";
+  }
+  return routeAltMode;
+}
+
+function getPositionAtDistance(progress) {
+  let targetProgress = progress;
+  if (targetProgress >= totalPathDistance) {
+    targetProgress = targetProgress % totalPathDistance;
+  }
+  if (targetProgress < 0) {
+    targetProgress = 0;
+  }
+
+  let idx = 0;
+  while (idx < pathDistances.length - 2 && pathDistances[idx + 1] < targetProgress) {
+    idx++;
+  }
+
+  const segmentDist = pathDistances[idx + 1] - pathDistances[idx];
+  const distInSegment = targetProgress - pathDistances[idx];
+  const frac = segmentDist > 0 ? distInSegment / segmentDist : 0;
+
+  const p1 = getCoordinate(lastRoutePath[idx]);
+  const p2 = getCoordinate(lastRoutePath[idx + 1] || lastRoutePath[idx]);
+
+  return {
+    lat: p1.lat + (p2.lat - p1.lat) * frac,
+    lng: p1.lng + (p2.lng - p1.lng) * frac
+  };
+}
+
+function precomputePathDistances(path) {
+  pathDistances = [0];
+  totalPathDistance = 0;
+  for (let i = 1; i < path.length; i++) {
+    const p1 = getCoordinate(path[i - 1]);
+    const p2 = getCoordinate(path[i]);
+    const dist = getHaversineDistance(p1.lat, p1.lng, p2.lat, p2.lng);
+    totalPathDistance += dist;
+    pathDistances.push(totalPathDistance);
+  }
+}
+
 function startTour() {
   if (!mapElement || !lastRoutePath || lastRoutePath.length < 2) return;
 
@@ -622,17 +692,62 @@ function startTour() {
 
   isTouring = true;
   tourProgress = 0;
+  currentTourHeading = null; // Reset tour heading smoothing on start
 
-  // Toggle button states
+  // Toggle button states (disable tour button while aligning)
   btnOrbit.disabled = true;
   btnStop.disabled = false;
   
   if (btnTour) {
-    btnTour.innerHTML = `<span style="display:inline-block; animation:spin 2s infinite linear; margin-right:4px;">🚗</span> Touring...`;
+    btnTour.disabled = true;
+    btnTour.innerHTML = `<span style="display:inline-block; animation:spin 2s infinite linear; margin-right:4px;">✈️</span> Aligning...`;
   }
 
-  // Begin animation frame loop
-  tourAnimationId = requestAnimationFrame(animateTour);
+  // Pre-calculate starting camera values
+  const p1 = getCoordinate(lastRoutePath[0]);
+  const p2 = getCoordinate(lastRoutePath[1]);
+  const startHeading = getHeading(p1.lat, p1.lng, p2.lat, p2.lng);
+
+  const altitude = parseFloat(selectPolyAltVal.value) || 0;
+  const viewType = selectTourView ? selectTourView.value : "fp";
+  const tourHeightOffset = rangeTourAltitude ? parseFloat(rangeTourAltitude.value) : 5;
+
+  let targetCenter, targetTilt, targetRange;
+  if (viewType === "tp") {
+    targetCenter = { lat: p1.lat, lng: p1.lng, altitude: altitude + (tourHeightOffset * 1.5) };
+    targetTilt = 65;
+    targetRange = tourHeightOffset * 2.2;
+  } else {
+    targetCenter = { lat: p1.lat, lng: p1.lng, altitude: altitude + tourHeightOffset };
+    targetTilt = 80;
+    targetRange = 0.1;
+  }
+
+  // 1. Fly camera smoothly to the starting point of the route
+  mapElement.flyCameraTo({
+    endCamera: {
+      center: targetCenter,
+      heading: startHeading,
+      tilt: targetTilt,
+      range: targetRange,
+      altitudeMode: getCameraAltitudeMode()
+    },
+    durationMillis: 3000 // 3 seconds smooth alignment flight
+  });
+
+  // 2. Wait for alignment flight to finish before starting the frame tour loop
+  const onAlignComplete = () => {
+    if (isTouring) {
+      if (btnTour) {
+        btnTour.disabled = false;
+        btnTour.innerHTML = `<span style="display:inline-block; animation:spin 2s infinite linear; margin-right:4px;">🚗</span> Touring...`;
+      }
+      currentTourHeading = startHeading;
+      tourAnimationId = requestAnimationFrame(animateTour);
+    }
+  };
+
+  mapElement.addEventListener("gmp-animationend", onAlignComplete, { once: true });
 }
 
 function stopTour() {
@@ -642,7 +757,13 @@ function stopTour() {
     tourAnimationId = null;
   }
 
+  // Halt camera flight if alignment is still running
+  if (mapElement) {
+    mapElement.stopCameraAnimation();
+  }
+
   if (btnTour) {
+    btnTour.disabled = false;
     btnTour.innerHTML = `<svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M19,12L15,8V11H5V13H15V16L19,12Z"/></svg> Route Tour`;
   }
 
@@ -652,39 +773,44 @@ function stopTour() {
 }
 
 function animateTour() {
-  if (!isTouring || !lastRoutePath || lastRoutePath.length < 2) {
+  if (!isTouring || !lastRoutePath || lastRoutePath.length < 2 || pathDistances.length < 2) {
     stopTour();
     return;
   }
 
-  const N = lastRoutePath.length;
-
   // Read tour options dynamically at each frame
   const speedVal = selectTourSpeed ? selectTourSpeed.value : "normal";
-  let speedStep = 0.05; // normal speed step
-  if (speedVal === "slow") speedStep = 0.015;
-  else if (speedVal === "fast") speedStep = 0.12;
-  else if (speedVal === "warp") speedStep = 0.35;
+  // Speed step in meters per frame:
+  let speedStep = 4.0; // normal (e.g. 4 meters/frame, at 60 FPS is ~240 m/s or 864 km/h)
+  if (speedVal === "slow") speedStep = 0.3;
+  else if (speedVal === "fast") speedStep = 10.0;
+  else if (speedVal === "warp") speedStep = 25.0;
 
   tourProgress += speedStep;
 
   // Loop route when tour ends
-  if (tourProgress >= N - 1) {
+  if (tourProgress >= totalPathDistance) {
     tourProgress = 0;
   }
 
-  const idx = Math.floor(tourProgress);
-  const frac = tourProgress - idx;
+  // Get current position at progress
+  const currentPos = getPositionAtDistance(tourProgress);
+  const lat = currentPos.lat;
+  const lng = currentPos.lng;
 
-  const p1 = getCoordinate(lastRoutePath[idx]);
-  const p2 = getCoordinate(lastRoutePath[idx + 1] || lastRoutePath[idx]);
+  // Look-ahead distance: e.g. 15 meters or speed-dependent to smoothly look down the path
+  const lookAheadDistance = Math.max(speedStep * 15, 20); // 20m default, increases with speed
+  const aheadPos = getPositionAtDistance(tourProgress + lookAheadDistance);
 
-  // Interpolate route coordinates
-  const lat = p1.lat + (p2.lat - p1.lat) * frac;
-  const lng = p1.lng + (p2.lng - p1.lng) * frac;
+  // Calculate target heading directly towards the look-ahead point
+  const targetHeading = getHeading(lat, lng, aheadPos.lat, aheadPos.lng);
 
-  // Calculate direction bearing
-  const heading = getHeading(p1.lat, p1.lng, p2.lat, p2.lng);
+  if (currentTourHeading === null) {
+    currentTourHeading = targetHeading;
+  } else {
+    // Use highly responsive smoothing to prevent jitters without lagging behind movement
+    currentTourHeading = interpolateHeading(currentTourHeading, targetHeading, 0.15);
+  }
 
   // Read routing altitude setting
   const altitude = parseFloat(selectPolyAltVal.value) || 0;
@@ -692,22 +818,31 @@ function animateTour() {
   // Read view type (First-Person vs Chase Cam)
   const viewType = selectTourView ? selectTourView.value : "fp";
 
-  // Read tour camera height offset dynamically from slider (default 30m)
-  const tourHeightOffset = rangeTourAltitude ? parseFloat(rangeTourAltitude.value) : 30;
+  // Read tour camera height offset dynamically from slider (default 100m now)
+  const tourHeightOffset = rangeTourAltitude ? parseFloat(rangeTourAltitude.value) : 5;
+
+  const cameraAltMode = getCameraAltitudeMode();
+  let targetAltitude = altitude + tourHeightOffset;
+  let targetTilt = 80;
+  let targetRange = 0.1;
 
   if (viewType === "tp") {
     // Chase Cam (Third-person follow) dynamically positioned relative to camera height
-    mapElement.center = { lat, lng, altitude: altitude + (tourHeightOffset * 1.5) };
-    mapElement.heading = heading;
-    mapElement.tilt = 65;
-    mapElement.range = tourHeightOffset * 2.2; // Zoom range relative to slider value
-  } else {
-    // First-Person (Low flyover view) at height selected by user
-    mapElement.center = { lat, lng, altitude: altitude + tourHeightOffset };
-    mapElement.heading = heading;
-    mapElement.tilt = 80; // Look forward
-    mapElement.range = 0.1; // Place camera at point
+    targetAltitude = altitude + (tourHeightOffset * 1.5);
+    targetTilt = 65;
+    targetRange = tourHeightOffset * 2.2; // Zoom range relative to slider value
   }
+
+  mapElement.flyCameraTo({
+    endCamera: {
+      center: { lat, lng, altitude: targetAltitude },
+      heading: currentTourHeading,
+      tilt: targetTilt,
+      range: targetRange,
+      altitudeMode: cameraAltMode
+    },
+    durationMillis: 0
+  });
 
   tourAnimationId = requestAnimationFrame(animateTour);
 }
