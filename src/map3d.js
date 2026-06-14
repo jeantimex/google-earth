@@ -3,10 +3,9 @@ import { importLibrary, setOptions } from "@googlemaps/js-api-loader";
 // Coordinate definitions for destinations
 const DESTINATIONS = {
   sf: {
-    center: { lat: 37.7749, lng: -122.4194, altitude: 100 },
-    tilt: 60,
-    heading: 0,
-    range: 1500
+    center: { lat: 37.7704, lng: -122.3985, altitude: 1000 },
+    tilt: 67.5,
+    heading: 0
   },
   nyc: {
     center: { lat: 40.7484, lng: -73.9857, altitude: 100 },
