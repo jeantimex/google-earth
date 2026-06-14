@@ -55,6 +55,7 @@ let smoothCameraCenter = null;
 let smoothHeading = null;
 let smoothTilt = null;
 let smoothRange = null;
+let lastFrameTime = null;
 
 // Autocomplete States
 const autocompleteState = {
@@ -88,7 +89,8 @@ const btnClearRoute = document.getElementById("btn-clear-route");
 const selectPolyAltMode = document.getElementById("select-poly-alt-mode");
 const selectPolyAltVal = document.getElementById("select-poly-alt-val");
 const btnTour = document.getElementById("btn-tour");
-const selectTourSpeed = document.getElementById("select-tour-speed");
+const rangeTourSpeed = document.getElementById("range-tour-speed");
+const labelTourSpeed = document.getElementById("label-tour-speed");
 const selectTourView = document.getElementById("select-tour-view");
 const rangeTourAltitude = document.getElementById("range-tour-altitude");
 const labelTourAltitude = document.getElementById("label-tour-altitude");
@@ -301,6 +303,14 @@ function setupEventListeners() {
   if (rangeCameraSuspension && labelCameraSuspension) {
     rangeCameraSuspension.addEventListener("input", (e) => {
       labelCameraSuspension.innerText = `${e.target.value}%`;
+    });
+  }
+
+  if (rangeTourSpeed && labelTourSpeed) {
+    rangeTourSpeed.addEventListener("input", (e) => {
+      const mps = parseInt(e.target.value);
+      const kmh = Math.round(mps * 3.6);
+      labelTourSpeed.innerText = `${mps} m/s (~${kmh} km/h)`;
     });
   }
 
@@ -709,6 +719,7 @@ function startTour() {
   smoothHeading = null;
   smoothTilt = null;
   smoothRange = null;
+  lastFrameTime = null;
 
   // Toggle button states (disable tour button while aligning)
   btnOrbit.disabled = true;
@@ -726,7 +737,7 @@ function startTour() {
 
   const altitude = parseFloat(selectPolyAltVal.value) || 0;
   const viewType = selectTourView ? selectTourView.value : "fp";
-  const tourHeightOffset = rangeTourAltitude ? parseFloat(rangeTourAltitude.value) : 5;
+  const tourHeightOffset = rangeTourAltitude ? parseFloat(rangeTourAltitude.value) : 10;
 
   let targetCenter, targetTilt, targetRange;
   if (viewType === "tp") {
@@ -783,6 +794,7 @@ function stopTour() {
   smoothTilt = null;
   smoothRange = null;
   currentTourHeading = null;
+  lastFrameTime = null;
 
   // Halt camera flight if alignment is still running
   if (mapElement) {
@@ -799,21 +811,27 @@ function stopTour() {
   btnStop.disabled = true;
 }
 
-function animateTour() {
+function animateTour(timestamp) {
   if (!isTouring || !lastRoutePath || lastRoutePath.length < 2 || pathDistances.length < 2) {
     stopTour();
     return;
   }
 
-  // Read tour options dynamically at each frame
-  const speedVal = selectTourSpeed ? selectTourSpeed.value : "normal";
-  // Speed step in meters per frame:
-  let speedStep = 4.0; // normal (e.g. 4 meters/frame, at 60 FPS is ~240 m/s or 864 km/h)
-  if (speedVal === "slow") speedStep = 0.3;
-  else if (speedVal === "fast") speedStep = 10.0;
-  else if (speedVal === "warp") speedStep = 25.0;
+  // Calculate delta time in seconds to make camera movement frame-rate independent
+  if (!timestamp) timestamp = performance.now();
+  if (lastFrameTime === null) {
+    lastFrameTime = timestamp;
+    tourAnimationId = requestAnimationFrame(animateTour);
+    return;
+  }
 
-  tourProgress += speedStep;
+  const dt = Math.min((timestamp - lastFrameTime) / 1000, 0.1); // Clamp to 100ms max to prevent jumps
+  lastFrameTime = timestamp;
+
+  // Read tour speed dynamically from the slider in meters per second (default 20 m/s)
+  const speedMPS = rangeTourSpeed ? parseFloat(rangeTourSpeed.value) : 20.0;
+
+  tourProgress += speedMPS * dt;
 
   // Loop route when tour ends
   if (tourProgress >= totalPathDistance) {
@@ -825,8 +843,8 @@ function animateTour() {
   const lat = currentPos.lat;
   const lng = currentPos.lng;
 
-  // Look-ahead distance: e.g. 15 meters or speed-dependent to smoothly look down the path
-  const lookAheadDistance = Math.max(speedStep * 15, 20); // 20m default, increases with speed
+  // Look-ahead distance: default 25 meters, scales up with speed for smooth leading curves
+  const lookAheadDistance = Math.max(speedMPS * dt * 25, 25);
   const aheadPos = getPositionAtDistance(tourProgress + lookAheadDistance);
 
   // Calculate target heading directly towards the look-ahead point
@@ -838,8 +856,8 @@ function animateTour() {
   // Read view type (First-Person vs Chase Cam)
   const viewType = selectTourView ? selectTourView.value : "fp";
 
-  // Read tour camera height offset dynamically from slider (default 100m now)
-  const tourHeightOffset = rangeTourAltitude ? parseFloat(rangeTourAltitude.value) : 5;
+  // Read tour camera height offset dynamically from slider (default 10m now)
+  const tourHeightOffset = rangeTourAltitude ? parseFloat(rangeTourAltitude.value) : 10;
 
   const cameraAltMode = getCameraAltitudeMode();
   let targetAltitude = altitude + tourHeightOffset;
@@ -855,10 +873,19 @@ function animateTour() {
 
   // Read camera suspension/gimbal smoothing factor from slider (default 90%, yielding k = 0.1)
   const suspensionVal = rangeCameraSuspension ? parseFloat(rangeCameraSuspension.value) : 90;
-  // Map suspension percentage (0 to 98) to low-pass coefficient k (1.0 to 0.02)
-  // High percentage means high smoothing (small k = very soft/gentle suspension)
-  // Low percentage means low smoothing (large k = very stiff/immediate camera)
+  
+  // Base smoothing factor k for translation (position)
   const k = Math.max(1.0 - (suspensionVal / 100), 0.02);
+  
+  // We damp altitude turning even further to avoid any vertical bumps/dips
+  // Roads have very gradual slopes, but DTM data can have high-frequency noise.
+  // Using a very small coefficient for altitude creates a vertical glide-cam effect.
+  const kAltitude = k * 0.15;
+
+  // We damp heading turning even further to guarantee buttery-smooth rotations (gimbal effect)
+  // Yaw rotation is highly sensitive to jerky movements, so we damp it by a factor of 0.3
+  const kHeading = k * 0.3;
+
   if (smoothCameraCenter === null) {
     smoothCameraCenter = { lat, lng, altitude: targetAltitude };
     smoothHeading = targetHeading;
@@ -867,8 +894,8 @@ function animateTour() {
   } else {
     smoothCameraCenter.lat += (lat - smoothCameraCenter.lat) * k;
     smoothCameraCenter.lng += (lng - smoothCameraCenter.lng) * k;
-    smoothCameraCenter.altitude += (targetAltitude - smoothCameraCenter.altitude) * k;
-    smoothHeading = interpolateHeading(smoothHeading, targetHeading, k);
+    smoothCameraCenter.altitude += (targetAltitude - smoothCameraCenter.altitude) * kAltitude;
+    smoothHeading = interpolateHeading(smoothHeading, targetHeading, kHeading);
     smoothTilt += (targetTilt - smoothTilt) * k;
     smoothRange += (targetRange - smoothRange) * k;
   }
