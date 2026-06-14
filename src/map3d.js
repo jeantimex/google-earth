@@ -45,6 +45,9 @@ let isOrbiting = false;
 let isTransitioning = false;
 let activePolyline = null;
 let lastRoutePath = null; // Stored path coordinate lat/lng points to support dynamic redraws
+let isTouring = false;
+let tourProgress = 0;
+let tourAnimationId = null;
 
 // Autocomplete States
 const autocompleteState = {
@@ -77,6 +80,11 @@ const btnDrawRoute = document.getElementById("btn-draw-route");
 const btnClearRoute = document.getElementById("btn-clear-route");
 const selectPolyAltMode = document.getElementById("select-poly-alt-mode");
 const selectPolyAltVal = document.getElementById("select-poly-alt-val");
+const btnTour = document.getElementById("btn-tour");
+const selectTourSpeed = document.getElementById("select-tour-speed");
+const selectTourView = document.getElementById("select-tour-view");
+const rangeTourAltitude = document.getElementById("range-tour-altitude");
+const labelTourAltitude = document.getElementById("label-tour-altitude");
 
 const apiKey = import.meta.env.VITE_GOOGLE_MAPS_JS_API_KEY;
 if (!apiKey) {
@@ -247,6 +255,16 @@ function setupEventListeners() {
     stopAnimation();
   });
 
+  if (btnTour) {
+    btnTour.addEventListener("click", () => {
+      if (isTouring) {
+        stopTour();
+      } else {
+        startTour();
+      }
+    });
+  }
+
   // Map Mode selection
   selectMode.addEventListener("change", (e) => {
     if (mapElement) {
@@ -256,7 +274,7 @@ function setupEventListeners() {
 
   // User click on map should stop animation
   mapElement.addEventListener("gmp-click", () => {
-    if (isOrbiting || isTransitioning) {
+    if (isOrbiting || isTransitioning || isTouring) {
       stopAnimation();
     }
   });
@@ -264,6 +282,12 @@ function setupEventListeners() {
   // Route Planning Event Listeners
   btnDrawRoute.addEventListener("click", drawRoute);
   btnClearRoute.addEventListener("click", clearRoute);
+
+  if (rangeTourAltitude && labelTourAltitude) {
+    rangeTourAltitude.addEventListener("input", (e) => {
+      labelTourAltitude.innerText = `${e.target.value}m`;
+    });
+  }
 
   // Redraw polyline dynamically when settings change
   selectPolyAltMode.addEventListener("change", updatePolylineFromSettings);
@@ -348,6 +372,10 @@ function stopAnimation() {
   isOrbiting = false;
   isTransitioning = false;
 
+  if (isTouring) {
+    stopTour();
+  }
+
   // Reset control button states
   btnOrbit.disabled = false;
   btnOrbit.innerHTML = `<svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12C20,13.62 19.5,15.14 18.67,16.4L16.29,14.03C16.74,13.43 17,12.75 17,12A5,5 0 0,0 12,7C11.25,7 10.57,7.26 9.97,7.71L7.6,5.33C8.86,4.5 10.38,4 12,4M12,9A3,3 0 0,1 15,12C15,12.72 14.72,13.38 14.28,13.88L13.88,14.28C13.38,14.72 12.72,15 12,15A3,3 0 0,1 9,12C9,11.28 9.28,10.62 9.72,10.12L10.12,9.72C10.62,9.28 11.28,9 12,9M12,17A5,5 0 0,0 14.03,16.29L16.4,18.67C15.14,19.5 13.62,20 12,20A8,8 0 0,1 4,12C4,10.38 4.5,8.86 5.33,7.6L7.71,9.97C7.26,10.57 7,11.25 7,12A5,5 0 0,0 12,17Z"/></svg> Start Orbit`;
@@ -400,6 +428,11 @@ async function drawRoute() {
 
     // Render polyline
     await renderPolyline(route.path);
+
+    // Enable Tour button
+    if (btnTour) {
+      btnTour.disabled = false;
+    }
   } catch (err) {
     console.error("Error drawing route:", err);
     alert(`Could not draw route: ${err.message}`);
@@ -553,6 +586,130 @@ function clearRoute() {
     activePolyline.remove();
     activePolyline = null;
   }
+
+  // Reset tour controls
+  if (btnTour) {
+    btnTour.disabled = true;
+    btnTour.innerHTML = `<svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M19,12L15,8V11H5V13H15V16L19,12Z"/></svg> Route Tour`;
+  }
+  if (isTouring) {
+    stopTour();
+  }
+}
+
+// --- First-Person Route Tour Animation ---
+
+function getHeading(lat1, lng1, lat2, lng2) {
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const lat1Rad = lat1 * Math.PI / 180;
+  const lat2Rad = lat2 * Math.PI / 180;
+
+  const y = Math.sin(dLng) * Math.cos(lat2Rad);
+  const x = Math.cos(lat1Rad) * Math.sin(lat2Rad) -
+            Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(dLng);
+
+  const brng = Math.atan2(y, x) * 180 / Math.PI;
+  return (brng + 360) % 360; // return bearing in 0-360 degrees
+}
+
+function startTour() {
+  if (!mapElement || !lastRoutePath || lastRoutePath.length < 2) return;
+
+  // Stop any active camera movement
+  mapElement.stopCameraAnimation();
+  isOrbiting = false;
+  isTransitioning = false;
+
+  isTouring = true;
+  tourProgress = 0;
+
+  // Toggle button states
+  btnOrbit.disabled = true;
+  btnStop.disabled = false;
+  
+  if (btnTour) {
+    btnTour.innerHTML = `<span style="display:inline-block; animation:spin 2s infinite linear; margin-right:4px;">🚗</span> Touring...`;
+  }
+
+  // Begin animation frame loop
+  tourAnimationId = requestAnimationFrame(animateTour);
+}
+
+function stopTour() {
+  isTouring = false;
+  if (tourAnimationId) {
+    cancelAnimationFrame(tourAnimationId);
+    tourAnimationId = null;
+  }
+
+  if (btnTour) {
+    btnTour.innerHTML = `<svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M19,12L15,8V11H5V13H15V16L19,12Z"/></svg> Route Tour`;
+  }
+
+  // Restore button states
+  btnOrbit.disabled = false;
+  btnStop.disabled = true;
+}
+
+function animateTour() {
+  if (!isTouring || !lastRoutePath || lastRoutePath.length < 2) {
+    stopTour();
+    return;
+  }
+
+  const N = lastRoutePath.length;
+
+  // Read tour options dynamically at each frame
+  const speedVal = selectTourSpeed ? selectTourSpeed.value : "normal";
+  let speedStep = 0.05; // normal speed step
+  if (speedVal === "slow") speedStep = 0.015;
+  else if (speedVal === "fast") speedStep = 0.12;
+  else if (speedVal === "warp") speedStep = 0.35;
+
+  tourProgress += speedStep;
+
+  // Loop route when tour ends
+  if (tourProgress >= N - 1) {
+    tourProgress = 0;
+  }
+
+  const idx = Math.floor(tourProgress);
+  const frac = tourProgress - idx;
+
+  const p1 = getCoordinate(lastRoutePath[idx]);
+  const p2 = getCoordinate(lastRoutePath[idx + 1] || lastRoutePath[idx]);
+
+  // Interpolate route coordinates
+  const lat = p1.lat + (p2.lat - p1.lat) * frac;
+  const lng = p1.lng + (p2.lng - p1.lng) * frac;
+
+  // Calculate direction bearing
+  const heading = getHeading(p1.lat, p1.lng, p2.lat, p2.lng);
+
+  // Read routing altitude setting
+  const altitude = parseFloat(selectPolyAltVal.value) || 0;
+
+  // Read view type (First-Person vs Chase Cam)
+  const viewType = selectTourView ? selectTourView.value : "fp";
+
+  // Read tour camera height offset dynamically from slider (default 30m)
+  const tourHeightOffset = rangeTourAltitude ? parseFloat(rangeTourAltitude.value) : 30;
+
+  if (viewType === "tp") {
+    // Chase Cam (Third-person follow) dynamically positioned relative to camera height
+    mapElement.center = { lat, lng, altitude: altitude + (tourHeightOffset * 1.5) };
+    mapElement.heading = heading;
+    mapElement.tilt = 65;
+    mapElement.range = tourHeightOffset * 2.2; // Zoom range relative to slider value
+  } else {
+    // First-Person (Low flyover view) at height selected by user
+    mapElement.center = { lat, lng, altitude: altitude + tourHeightOffset };
+    mapElement.heading = heading;
+    mapElement.tilt = 80; // Look forward
+    mapElement.range = 0.1; // Place camera at point
+  }
+
+  tourAnimationId = requestAnimationFrame(animateTour);
 }
 
 // Run initializer
