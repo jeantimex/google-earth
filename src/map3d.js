@@ -41,7 +41,8 @@ const DESTINATIONS = {
 
 const ROUTE_STROKE_COLOR = "#0b57d0";
 const ROUTE_STROKE_WIDTH = 18;
-const TOUR_CAMERA_ALTITUDE_MODE = "RELATIVE_TO_GROUND";
+const DEFAULT_TOUR_CAMERA_ALTITUDE_MODE = "ABSOLUTE";
+const ELEVATION_REQUEST_CHUNK_SIZE = 512;
 
 let mapElement = null;
 let currentDestKey = "sf";
@@ -49,6 +50,7 @@ let isOrbiting = false;
 let isTransitioning = false;
 let activePolyline = null;
 let lastRoutePath = null; // Stored path coordinate lat/lng points to support dynamic redraws
+let lastRouteElevations = []; // Ground elevation per route path point, meters above sea level
 let pathDistances = [];   // Cumulative distances along route segments in meters
 let totalPathDistance = 0; // Total length of route in meters
 let isTouring = false;
@@ -60,7 +62,7 @@ let smoothHeading = null;
 let smoothTilt = null;
 let smoothRange = null;
 let lastFrameTime = null;
-let lockedTourAltitude = null;
+let lockedTourBaseAltitude = null;
 
 // Autocomplete States
 const autocompleteState = {
@@ -97,6 +99,7 @@ const btnTour = document.getElementById("btn-tour");
 const rangeTourSpeed = document.getElementById("range-tour-speed");
 const labelTourSpeed = document.getElementById("label-tour-speed");
 const selectTourView = document.getElementById("select-tour-view");
+const selectTourAltMode = document.getElementById("select-tour-alt-mode");
 const rangeTourAltitude = document.getElementById("range-tour-altitude");
 const labelTourAltitude = document.getElementById("label-tour-altitude");
 const rangeCameraSuspension = document.getElementById("range-camera-suspension");
@@ -129,7 +132,7 @@ if (!apiKey) {
 setOptions({
   key: apiKey,
   v: "weekly",
-  libraries: ["maps3d", "places", "routes"]
+  libraries: ["maps3d", "places", "routes", "elevation"]
 });
 
 async function init() {
@@ -509,6 +512,7 @@ async function drawRoute() {
 
     // Store the path coordinates globally to allow live settings changes
     lastRoutePath = route.path;
+    lastRouteElevations = await fetchRouteElevations(route.path);
     precomputePathDistances(route.path);
 
     // Render polyline
@@ -674,6 +678,7 @@ function clearRoute() {
   autocompleteState.destination.input.value = "";
   autocompleteState.destination.selectedPlace = null;
   lastRoutePath = null;
+  lastRouteElevations = [];
 
   hideSuggestions("origin");
   hideSuggestions("destination");
@@ -716,6 +721,10 @@ function interpolateHeading(current, target, lerpFactor) {
   return (current + diff * lerpFactor + 360) % 360;
 }
 
+function getTimeAdjustedLerpFactor(frameLerpFactor, dt) {
+  return 1 - Math.pow(1 - frameLerpFactor, dt * 60);
+}
+
 function getCameraAltitudeMode() {
   const routeAltMode = selectPolyAltMode ? selectPolyAltMode.value : "CLAMP_TO_GROUND";
   if (routeAltMode === "CLAMP_TO_GROUND") {
@@ -725,10 +734,10 @@ function getCameraAltitudeMode() {
 }
 
 function getTourCameraAltitudeMode() {
-  return TOUR_CAMERA_ALTITUDE_MODE;
+  return selectTourAltMode?.value || DEFAULT_TOUR_CAMERA_ALTITUDE_MODE;
 }
 
-function getPositionAtDistance(progress) {
+function getRouteSampleAtDistance(progress) {
   let targetProgress = progress;
   if (targetProgress >= totalPathDistance) {
     targetProgress = totalPathDistance;
@@ -748,11 +757,19 @@ function getPositionAtDistance(progress) {
 
   const p1 = getCoordinate(lastRoutePath[idx]);
   const p2 = getCoordinate(lastRoutePath[idx + 1] || lastRoutePath[idx]);
+  const altitude1 = lastRouteElevations[idx] ?? 0;
+  const altitude2 = lastRouteElevations[idx + 1] ?? altitude1;
 
   return {
     lat: p1.lat + (p2.lat - p1.lat) * frac,
-    lng: p1.lng + (p2.lng - p1.lng) * frac
+    lng: p1.lng + (p2.lng - p1.lng) * frac,
+    altitude: altitude1 + (altitude2 - altitude1) * frac
   };
+}
+
+function getPositionAtDistance(progress) {
+  const sample = getRouteSampleAtDistance(progress);
+  return { lat: sample.lat, lng: sample.lng };
 }
 
 function precomputePathDistances(path) {
@@ -765,6 +782,47 @@ function precomputePathDistances(path) {
     totalPathDistance += dist;
     pathDistances.push(totalPathDistance);
   }
+}
+
+async function fetchRouteElevations(path) {
+  const fallback = new Array(path.length).fill(0);
+
+  try {
+    const { ElevationService } = await importLibrary("elevation");
+    const elevationService = new ElevationService();
+    const elevations = [];
+
+    for (let i = 0; i < path.length; i += ELEVATION_REQUEST_CHUNK_SIZE) {
+      const pathChunk = path.slice(i, i + ELEVATION_REQUEST_CHUNK_SIZE);
+      const locations = pathChunk.map((point) => {
+        const coords = getCoordinate(point);
+        return { lat: coords.lat, lng: coords.lng };
+      });
+      const response = await elevationService.getElevationForLocations({ locations });
+      elevations.push(...locations.map((_, index) => response.results?.[index]?.elevation ?? 0));
+    }
+
+    return elevations.length === path.length ? elevations : fallback;
+  } catch (error) {
+    console.warn("Failed to fetch route elevations. Absolute tour altitude will use 0m base.", error);
+    return fallback;
+  }
+}
+
+function getTourHeightOffset(viewType) {
+  if (viewType === "tp") {
+    return rangeChaseHeight ? parseFloat(rangeChaseHeight.value) : 15;
+  }
+
+  return rangeTourAltitude ? parseFloat(rangeTourAltitude.value) : 10;
+}
+
+function getTourBaseAltitude(routeSample, cameraAltMode) {
+  if (cameraAltMode === "ABSOLUTE") {
+    return routeSample.altitude ?? 0;
+  }
+
+  return lockedTourBaseAltitude ?? 0;
 }
 
 function startTour() {
@@ -783,7 +841,7 @@ function startTour() {
   smoothTilt = null;
   smoothRange = null;
   lastFrameTime = null;
-  lockedTourAltitude = null;
+  lockedTourBaseAltitude = null;
 
   // Toggle button states (disable tour button while aligning)
   btnOrbit.disabled = true;
@@ -797,11 +855,15 @@ function startTour() {
   // Pre-calculate starting camera values
   const p1 = getCoordinate(lastRoutePath[0]);
   const p2 = getCoordinate(lastRoutePath[1]);
+  const startSample = getRouteSampleAtDistance(0);
   const startHeading = getHeading(p1.lat, p1.lng, p2.lat, p2.lng);
 
   const altitude = parseFloat(selectPolyAltVal.value) || 0;
+  lockedTourBaseAltitude = altitude;
   const viewType = selectTourView ? selectTourView.value : "fp";
-  const tourHeightOffset = rangeTourAltitude ? parseFloat(rangeTourAltitude.value) : 10;
+  const cameraAltMode = getTourCameraAltitudeMode();
+  const tourBaseAltitude = getTourBaseAltitude(startSample, cameraAltMode);
+  const tourHeightOffset = getTourHeightOffset(viewType);
 
   let targetCenter, targetTilt, targetRange, targetHeadingVal;
   targetHeadingVal = startHeading;
@@ -809,21 +871,18 @@ function startTour() {
   if (viewType === "tp") {
     // Read Chase Cam specific settings
     const chaseDistance = rangeChaseDistance ? parseFloat(rangeChaseDistance.value) : 50;
-    const chaseHeight = rangeChaseHeight ? parseFloat(rangeChaseHeight.value) : 15;
     const chaseHeadingOffset = rangeChaseHeading ? parseFloat(rangeChaseHeading.value) : 0;
     const chaseTilt = rangeChaseTilt ? parseFloat(rangeChaseTilt.value) : 65;
 
-    targetCenter = { lat: p1.lat, lng: p1.lng, altitude: altitude + chaseHeight };
+    targetCenter = { lat: p1.lat, lng: p1.lng, altitude: tourBaseAltitude + tourHeightOffset };
     targetTilt = chaseTilt;
     targetRange = chaseDistance;
     targetHeadingVal = (startHeading + chaseHeadingOffset + 360) % 360;
   } else {
-    targetCenter = { lat: p1.lat, lng: p1.lng, altitude: altitude + tourHeightOffset };
+    targetCenter = { lat: p1.lat, lng: p1.lng, altitude: tourBaseAltitude + tourHeightOffset };
     targetTilt = 80;
     targetRange = 0.1;
   }
-
-  lockedTourAltitude = targetCenter.altitude;
 
   // 1. Fly camera smoothly to the starting point of the route
   mapElement.flyCameraTo({
@@ -832,7 +891,7 @@ function startTour() {
       heading: targetHeadingVal,
       tilt: targetTilt,
       range: targetRange,
-      altitudeMode: getTourCameraAltitudeMode()
+      altitudeMode: cameraAltMode
     },
     durationMillis: 3000 // 3 seconds smooth alignment flight
   });
@@ -870,7 +929,7 @@ function stopTour() {
   smoothRange = null;
   currentTourHeading = null;
   lastFrameTime = null;
-  lockedTourAltitude = null;
+  lockedTourBaseAltitude = null;
 
   // Halt camera flight if alignment is still running
   if (mapElement) {
@@ -917,9 +976,9 @@ function animateTour(timestamp) {
   }
 
   // Get current position at progress
-  const currentPos = getPositionAtDistance(tourProgress);
-  const lat = currentPos.lat;
-  const lng = currentPos.lng;
+  const currentSample = getRouteSampleAtDistance(tourProgress);
+  const lat = currentSample.lat;
+  const lng = currentSample.lng;
 
   // Look-ahead distance: default 25 meters, scales up with speed for smooth leading curves
   const lookAheadDistance = Math.max(speedMPS * dt * 25, 25);
@@ -940,7 +999,8 @@ function animateTour(timestamp) {
   const viewType = selectTourView ? selectTourView.value : "fp";
 
   const cameraAltMode = getTourCameraAltitudeMode();
-  let targetAltitude = lockedTourAltitude ?? 10;
+  const baseAltitude = getTourBaseAltitude(currentSample, cameraAltMode);
+  let targetAltitude = baseAltitude + getTourHeightOffset(viewType);
   let targetTilt = 80;
   let targetRange = 0.1;
   let finalTargetHeading = targetHeading;
@@ -956,21 +1016,20 @@ function animateTour(timestamp) {
     finalTargetHeading = (targetHeading + chaseHeadingOffset + 360) % 360;
   }
 
-  // Read camera suspension/gimbal smoothing factor from slider (default 90%, yielding k = 0.1)
+  // Read camera suspension/gimbal smoothing factor from slider (default 90%, yielding k = 0.1 at 60fps)
   const suspensionVal = rangeCameraSuspension ? parseFloat(rangeCameraSuspension.value) : 90;
-  
-  // Base smoothing factor k for translation (position)
-  const k = Math.max(1.0 - (suspensionVal / 100), 0.02);
-  
-  // Read turn smoothness slider (default 97%, yielding kHeading = 0.03)
-  const turnSmoothnessVal = rangeTurnSmoothness ? parseFloat(rangeTurnSmoothness.value) : 97;
-  // Map turn smoothness percentage (0 to 99) to yaw interpolation coefficient kHeading (1.0 to 0.01)
-  const kHeading = Math.max(1.0 - (turnSmoothnessVal / 100), 0.01);
+  const frameK = Math.max(1.0 - (suspensionVal / 100), 0.02);
+  const k = getTimeAdjustedLerpFactor(frameK, dt);
 
-  // We damp altitude turning even further to avoid any vertical bumps/dips
-  // Roads have very gradual slopes, but DTM data can have high-frequency noise.
-  // Using a very small coefficient for altitude creates a vertical glide-cam effect.
-  const kAltitude = k * 0.15;
+  // Read turn smoothness slider (default 97%, yielding kHeading = 0.03 at 60fps)
+  const turnSmoothnessVal = rangeTurnSmoothness ? parseFloat(rangeTurnSmoothness.value) : 97;
+  const frameKHeading = Math.max(1.0 - (turnSmoothnessVal / 100), 0.01);
+  const kHeading = getTimeAdjustedLerpFactor(frameKHeading, dt);
+  const kAltitude = getTimeAdjustedLerpFactor(0.08, dt);
+
+  // Horizontal position follows the route distance clock directly. Smoothing
+  // lat/lng here makes actual camera speed vary as the camera catches up.
+  let cameraAltitude = targetAltitude;
 
   if (smoothCameraCenter === null) {
     smoothCameraCenter = { lat, lng, altitude: targetAltitude };
@@ -978,9 +1037,8 @@ function animateTour(timestamp) {
     smoothTilt = targetTilt;
     smoothRange = targetRange;
   } else {
-    smoothCameraCenter.lat += (lat - smoothCameraCenter.lat) * k;
-    smoothCameraCenter.lng += (lng - smoothCameraCenter.lng) * k;
-    smoothCameraCenter.altitude += (targetAltitude - smoothCameraCenter.altitude) * kAltitude;
+    cameraAltitude = smoothCameraCenter.altitude + (targetAltitude - smoothCameraCenter.altitude) * kAltitude;
+    smoothCameraCenter = { lat, lng, altitude: cameraAltitude };
     smoothHeading = interpolateHeading(smoothHeading, finalTargetHeading, kHeading);
     smoothTilt += (targetTilt - smoothTilt) * k;
     smoothRange += (targetRange - smoothRange) * k;
