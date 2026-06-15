@@ -89,7 +89,8 @@ const selectMode = document.getElementById("select-mode");
 const btnDrawRoute = document.getElementById("btn-draw-route");
 const btnClearRoute = document.getElementById("btn-clear-route");
 const selectPolyAltMode = document.getElementById("select-poly-alt-mode");
-const selectPolyAltVal = document.getElementById("select-poly-alt-val");
+const rangePolyAltVal = document.getElementById("range-poly-alt-val");
+const labelPolyAltVal = document.getElementById("label-poly-alt-val");
 const btnTour = document.getElementById("btn-tour");
 const rangeTourSpeed = document.getElementById("range-tour-speed");
 const labelTourSpeed = document.getElementById("label-tour-speed");
@@ -189,7 +190,7 @@ function createRouteAnimator() {
 }
 
 function getCurrentRouteBaseAltitude() {
-  return parseFloat(selectPolyAltVal.value) || 0;
+  return parseFloat(rangePolyAltVal?.value) || 0;
 }
 
 function updateRouteAnimatorRoute() {
@@ -398,7 +399,12 @@ function setupEventListeners() {
 
   // Redraw polyline dynamically when settings change
   selectPolyAltMode.addEventListener("change", updatePolylineFromSettings);
-  selectPolyAltVal.addEventListener("change", updatePolylineFromSettings);
+  if (rangePolyAltVal && labelPolyAltVal) {
+    rangePolyAltVal.addEventListener("input", (e) => {
+      labelPolyAltVal.innerText = `${e.target.value}m`;
+      updatePolylineFromSettings();
+    });
+  }
 
   // Toggle Chase Cam settings panel dynamically based on selectTourView value
   if (selectTourView && chaseCamSettings) {
@@ -572,7 +578,7 @@ async function drawRoute() {
     updateRouteAnimatorRoute();
 
     // Render polyline
-    await renderPolyline(route.path);
+    await renderPolyline(route.path, { fitCamera: true });
 
     // Enable Tour button
     if (btnTour) {
@@ -587,7 +593,7 @@ async function drawRoute() {
   }
 }
 
-async function renderPolyline(pathLatLngs) {
+async function renderPolyline(pathLatLngs, { fitCamera = false } = {}) {
   const { Polyline3DElement, AltitudeMode } = await importLibrary("maps3d");
 
   // Remove existing polyline if present
@@ -597,7 +603,7 @@ async function renderPolyline(pathLatLngs) {
   }
 
   const altMode = AltitudeMode[selectPolyAltMode.value] || AltitudeMode.CLAMP_TO_GROUND;
-  const altitude = parseFloat(selectPolyAltVal.value) || 0;
+  const altitude = getCurrentRouteBaseAltitude();
 
   // Transform standard LatLng path to LatLngAltitude objects safely
   const path = pathLatLngs.map(latLng => {
@@ -621,8 +627,9 @@ async function renderPolyline(pathLatLngs) {
   // Append the polyline to the 3D Map element
   mapElement.appendChild(activePolyline);
 
-  // Zoom camera to fit route bounds
-  fitCameraToPath(path);
+  if (fitCamera) {
+    fitCameraToPath(path);
+  }
 }
 
 function updatePolylineFromSettings() {

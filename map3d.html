@@ -62,15 +62,11 @@
                         </select>
                     </div>
                     <div class="control-group">
-                        <label for="select-poly-alt-val">Altitude</label>
-                        <select id="select-poly-alt-val">
-                            <option value="0" selected>0m</option>
-                            <option value="10">10m</option>
-                            <option value="30">30m</option>
-                            <option value="50">50m</option>
-                            <option value="100">100m</option>
-                            <option value="200">200m</option>
-                        </select>
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <label for="range-poly-alt-val">Altitude</label>
+                            <span id="label-poly-alt-val" style="font-size: 12px; color: #64ffda; font-weight: 600;">0m</span>
+                        </div>
+                        <input type="range" id="range-poly-alt-val" min="0" max="200" step="5" value="0" />
                     </div>
                 </div>
             </div>
