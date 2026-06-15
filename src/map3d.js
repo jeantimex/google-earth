@@ -41,6 +41,7 @@ const DESTINATIONS = {
 
 const ROUTE_STROKE_COLOR = "#0b57d0";
 const ROUTE_STROKE_WIDTH = 18;
+const TOUR_CAMERA_ALTITUDE_MODE = "RELATIVE_TO_GROUND";
 
 let mapElement = null;
 let currentDestKey = "sf";
@@ -59,6 +60,7 @@ let smoothHeading = null;
 let smoothTilt = null;
 let smoothRange = null;
 let lastFrameTime = null;
+let lockedTourAltitude = null;
 
 // Autocomplete States
 const autocompleteState = {
@@ -722,6 +724,10 @@ function getCameraAltitudeMode() {
   return routeAltMode;
 }
 
+function getTourCameraAltitudeMode() {
+  return TOUR_CAMERA_ALTITUDE_MODE;
+}
+
 function getPositionAtDistance(progress) {
   let targetProgress = progress;
   if (targetProgress >= totalPathDistance) {
@@ -777,6 +783,7 @@ function startTour() {
   smoothTilt = null;
   smoothRange = null;
   lastFrameTime = null;
+  lockedTourAltitude = null;
 
   // Toggle button states (disable tour button while aligning)
   btnOrbit.disabled = true;
@@ -816,6 +823,8 @@ function startTour() {
     targetRange = 0.1;
   }
 
+  lockedTourAltitude = targetCenter.altitude;
+
   // 1. Fly camera smoothly to the starting point of the route
   mapElement.flyCameraTo({
     endCamera: {
@@ -823,7 +832,7 @@ function startTour() {
       heading: targetHeadingVal,
       tilt: targetTilt,
       range: targetRange,
-      altitudeMode: getCameraAltitudeMode()
+      altitudeMode: getTourCameraAltitudeMode()
     },
     durationMillis: 3000 // 3 seconds smooth alignment flight
   });
@@ -861,6 +870,7 @@ function stopTour() {
   smoothRange = null;
   currentTourHeading = null;
   lastFrameTime = null;
+  lockedTourAltitude = null;
 
   // Halt camera flight if alignment is still running
   if (mapElement) {
@@ -926,16 +936,11 @@ function animateTour(timestamp) {
     targetHeading = getHeading(pPenultimate.lat, pPenultimate.lng, pEnd.lat, pEnd.lng);
   }
 
-  // Read routing altitude setting
-  const altitude = parseFloat(selectPolyAltVal.value) || 0;
-
   // Read view type (First-Person vs Chase Cam)
   const viewType = selectTourView ? selectTourView.value : "fp";
 
-  // Read tour camera height offset dynamically from slider (default 10m now)
-  const tourHeightOffset = rangeTourAltitude ? parseFloat(rangeTourAltitude.value) : 10;
-  const cameraAltMode = getCameraAltitudeMode();
-  let targetAltitude = altitude + tourHeightOffset;
+  const cameraAltMode = getTourCameraAltitudeMode();
+  let targetAltitude = lockedTourAltitude ?? 10;
   let targetTilt = 80;
   let targetRange = 0.1;
   let finalTargetHeading = targetHeading;
@@ -943,11 +948,9 @@ function animateTour(timestamp) {
   if (viewType === "tp") {
     // Read Chase Cam specific settings
     const chaseDistance = rangeChaseDistance ? parseFloat(rangeChaseDistance.value) : 50;
-    const chaseHeight = rangeChaseHeight ? parseFloat(rangeChaseHeight.value) : 15;
     const chaseHeadingOffset = rangeChaseHeading ? parseFloat(rangeChaseHeading.value) : 0;
     const chaseTilt = rangeChaseTilt ? parseFloat(rangeChaseTilt.value) : 65;
 
-    targetAltitude = altitude + chaseHeight;
     targetTilt = chaseTilt;
     targetRange = chaseDistance;
     finalTargetHeading = (targetHeading + chaseHeadingOffset + 360) % 360;
