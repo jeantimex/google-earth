@@ -4,11 +4,41 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Google Earth 3D Tiles</title>
-  <script type="module" crossorigin src="/google-earth/assets/main-C73Kf953.js"></script>
-  <link rel="stylesheet" crossorigin href="/google-earth/assets/main-CWJ9YTQq.css">
+    <style>
+        #map3d-nav-link {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(11, 12, 16, 0.85);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: #64ffda;
+            padding: 10px 18px;
+            border-radius: 8px;
+            font-family: Arial, sans-serif;
+            font-size: 13px;
+            font-weight: bold;
+            text-decoration: none;
+            z-index: 1000;
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+        #map3d-nav-link:hover {
+            background: #64ffda;
+            color: #0b0c10;
+            border-color: #64ffda;
+            transform: translateY(-1px);
+            box-shadow: 0 6px 16px rgba(100, 255, 218, 0.2);
+        }
+    </style>
+  <script type="module" crossorigin src="/google-earth/assets/main-BuSCjy5v.js"></script>
+  <link rel="modulepreload" crossorigin href="/google-earth/assets/index-duwKw2zz.js">
+  <link rel="stylesheet" crossorigin href="/google-earth/assets/main-Vlh5FI_j.css">
 </head>
 <body>
     <div id="info"></div>
     <div id="credits"></div>
+    <a href="/map3d.html" id="map3d-nav-link">Switch to 3D Map Explorer →</a>
 </body>
 </html>
