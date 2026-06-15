@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Google Maps 3D Explorer</title>
-  <script type="module" crossorigin src="/google-earth/assets/map3d-Ig3Nbykv.js"></script>
+  <script type="module" crossorigin src="/google-earth/assets/map3d-BMy2jEe-.js"></script>
   <link rel="modulepreload" crossorigin href="/google-earth/assets/index-duwKw2zz.js">
   <link rel="stylesheet" crossorigin href="/google-earth/assets/map3d-CHD3_kWL.css">
 </head>
@@ -64,15 +64,11 @@
                         </select>
                     </div>
                     <div class="control-group">
-                        <label for="select-poly-alt-val">Altitude</label>
-                        <select id="select-poly-alt-val">
-                            <option value="0" selected>0m</option>
-                            <option value="10">10m</option>
-                            <option value="30">30m</option>
-                            <option value="50">50m</option>
-                            <option value="100">100m</option>
-                            <option value="200">200m</option>
-                        </select>
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <label for="range-poly-alt-val">Altitude</label>
+                            <span id="label-poly-alt-val" style="font-size: 12px; color: #64ffda; font-weight: 600;">0m</span>
+                        </div>
+                        <input type="range" id="range-poly-alt-val" min="0" max="200" step="5" value="0" />
                     </div>
                 </div>
             </div>
