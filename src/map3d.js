@@ -39,12 +39,20 @@ const DESTINATIONS = {
   }
 };
 
+const ROUTE_STROKE_COLOR = "#0b57d0";
+const ROUTE_STROKE_WIDTH = 18;
+const TURN_MARKER_SCALE = 0.5;
+const APPROX_MAP3D_VERTICAL_FOV_DEGREES = 45;
+
 let mapElement = null;
 let currentDestKey = "sf";
 let isOrbiting = false;
 let isTransitioning = false;
 let activePolyline = null;
+let activeTurnMarkers = [];
 let lastRoutePath = null; // Stored path coordinate lat/lng points to support dynamic redraws
+let lastTurnPoints = [];   // Stored route turn coordinates for live marker redraws
+let turnMarkerRedrawId = null;
 let pathDistances = [];   // Cumulative distances along route segments in meters
 let totalPathDistance = 0; // Total length of route in meters
 let isTouring = false;
@@ -258,6 +266,8 @@ function hideSuggestions(field) {
 function setupEventListeners() {
   // Listen for animation events from map element
   mapElement.addEventListener("gmp-animationend", handleAnimationEnd);
+  mapElement.addEventListener("gmp-rangechange", scheduleTurnMarkerRedraw);
+  mapElement.addEventListener("gmp-tiltchange", scheduleTurnMarkerRedraw);
 
   // Destination select change listener
   if (selectDestination) {
@@ -504,10 +514,11 @@ async function drawRoute() {
 
     // Store the path coordinates globally to allow live settings changes
     lastRoutePath = route.path;
+    lastTurnPoints = getRouteTurnPoints(route);
     precomputePathDistances(route.path);
 
     // Render polyline
-    await renderPolyline(route.path);
+    await renderPolyline(route.path, lastTurnPoints);
 
     // Enable Tour button
     if (btnTour) {
@@ -551,14 +562,15 @@ function getCoordinate(latLng) {
   return { lat, lng };
 }
 
-async function renderPolyline(pathLatLngs) {
-  const { Polyline3DElement, AltitudeMode } = await importLibrary("maps3d");
+async function renderPolyline(pathLatLngs, turnLatLngs = []) {
+  const { Polyline3DElement, Polygon3DElement, AltitudeMode } = await importLibrary("maps3d");
 
   // Remove existing polyline if present
   if (activePolyline) {
     activePolyline.remove();
     activePolyline = null;
   }
+  clearTurnMarkers();
 
   const altMode = AltitudeMode[selectPolyAltMode.value] || AltitudeMode.CLAMP_TO_GROUND;
   const altitude = parseFloat(selectPolyAltVal.value) || 0;
@@ -577,22 +589,194 @@ async function renderPolyline(pathLatLngs) {
   activePolyline = new Polyline3DElement({
     path: path,
     altitudeMode: altMode,
-    strokeColor: "#64ffda", // Neon cyan
-    strokeWidth: 8,
+    strokeColor: ROUTE_STROKE_COLOR,
+    strokeWidth: ROUTE_STROKE_WIDTH,
     extruded: false
   });
 
   // Append the polyline to the 3D Map element
   mapElement.appendChild(activePolyline);
 
+  renderTurnMarkers(turnLatLngs, Polygon3DElement, altMode, altitude);
+
   // Zoom camera to fit route bounds
   fitCameraToPath(path);
+  window.setTimeout(scheduleTurnMarkerRedraw, 4200);
 }
 
 function updatePolylineFromSettings() {
   if (lastRoutePath) {
-    renderPolyline(lastRoutePath);
+    renderPolyline(lastRoutePath, lastTurnPoints);
   }
+}
+
+function clearTurnMarkers() {
+  activeTurnMarkers.forEach((marker) => marker.remove());
+  activeTurnMarkers = [];
+}
+
+async function scheduleTurnMarkerRedraw() {
+  if (!lastTurnPoints.length || turnMarkerRedrawId !== null) {
+    return;
+  }
+
+  turnMarkerRedrawId = requestAnimationFrame(async () => {
+    turnMarkerRedrawId = null;
+    const { Polygon3DElement, AltitudeMode } = await importLibrary("maps3d");
+    const altMode = AltitudeMode[selectPolyAltMode.value] || AltitudeMode.CLAMP_TO_GROUND;
+    const altitude = parseFloat(selectPolyAltVal.value) || 0;
+    renderTurnMarkers(lastTurnPoints, Polygon3DElement, altMode, altitude);
+  });
+}
+
+function renderTurnMarkers(turnLatLngs, Polygon3DElement, altMode, altitude) {
+  clearTurnMarkers();
+
+  const markerRadius = getTurnMarkerRadiusMeters();
+
+  turnLatLngs.forEach((turnLatLng) => {
+    const coords = getCoordinate(turnLatLng);
+    const marker = new Polygon3DElement({
+      path: createCircleCoordinates(coords, markerRadius, altitude),
+      altitudeMode: altMode,
+      fillColor: "#ffffff",
+      strokeColor: ROUTE_STROKE_COLOR,
+      strokeWidth: 2,
+      extruded: false
+    });
+
+    activeTurnMarkers.push(marker);
+    mapElement.appendChild(marker);
+  });
+}
+
+function getTurnMarkerRadiusMeters() {
+  return getMetersPerScreenPixel() * ROUTE_STROKE_WIDTH * TURN_MARKER_SCALE / 2;
+}
+
+function getMetersPerScreenPixel() {
+  const viewportHeight = Math.max(container?.clientHeight || window.innerHeight || 1, 1);
+  const range = Math.max(Number(mapElement?.range) || 1000, 1);
+  const tilt = Math.max(Number(mapElement?.tilt) || 0, 0);
+  const tiltScale = Math.max(Math.cos(tilt * Math.PI / 180), 0.35);
+  const verticalFov = APPROX_MAP3D_VERTICAL_FOV_DEGREES * Math.PI / 180;
+  return (2 * range * Math.tan(verticalFov / 2) * tiltScale) / viewportHeight;
+}
+
+function offsetCoordinate(center, bearingDegrees, distanceMeters, altitude) {
+  const earthRadiusMeters = 6378137;
+  const latRad = center.lat * Math.PI / 180;
+  const lngRad = center.lng * Math.PI / 180;
+  const bearing = bearingDegrees * Math.PI / 180;
+  const angularDistance = distanceMeters / earthRadiusMeters;
+  const pointLatRad = Math.asin(
+    Math.sin(latRad) * Math.cos(angularDistance) +
+    Math.cos(latRad) * Math.sin(angularDistance) * Math.cos(bearing)
+  );
+  const pointLngRad = lngRad + Math.atan2(
+    Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(latRad),
+    Math.cos(angularDistance) - Math.sin(latRad) * Math.sin(pointLatRad)
+  );
+
+  return {
+    lat: pointLatRad * 180 / Math.PI,
+    lng: pointLngRad * 180 / Math.PI,
+    altitude
+  };
+}
+
+function createCircleCoordinates(center, radiusMeters, altitude, segments = 32) {
+  const coordinates = [];
+
+  for (let i = 0; i < segments; i++) {
+    coordinates.push(offsetCoordinate(center, (360 * i) / segments, radiusMeters, altitude));
+  }
+
+  return coordinates;
+}
+
+function getRouteTurnPoints(route) {
+  const stepTurnPoints = getStepTurnPoints(route);
+  if (stepTurnPoints.length > 0) {
+    return stepTurnPoints;
+  }
+
+  return getGeometryTurnPoints(route.path || []);
+}
+
+function getStepTurnPoints(route) {
+  const points = [];
+  const legs = Array.isArray(route?.legs) ? route.legs : [];
+
+  legs.forEach((leg) => {
+    const steps = Array.isArray(leg?.steps) ? leg.steps : [];
+    steps.slice(1).forEach((step) => {
+      const startLocation = step.startLocation || step.start_location || step.start;
+      if (startLocation) {
+        points.push(startLocation);
+      } else if (Array.isArray(step.path) && step.path.length > 0) {
+        points.push(step.path[0]);
+      }
+    });
+  });
+
+  return dedupeNearbyPoints(points, 6);
+}
+
+function getGeometryTurnPoints(path) {
+  if (!Array.isArray(path) || path.length < 3) {
+    return [];
+  }
+
+  const turns = [];
+  const minSegmentMeters = 15;
+  const minTurnDegrees = 35;
+
+  for (let i = 1; i < path.length - 1; i++) {
+    const prev = getCoordinate(path[i - 1]);
+    const current = getCoordinate(path[i]);
+    const next = getCoordinate(path[i + 1]);
+    const incomingDistance = getHaversineDistance(prev.lat, prev.lng, current.lat, current.lng);
+    const outgoingDistance = getHaversineDistance(current.lat, current.lng, next.lat, next.lng);
+
+    if (incomingDistance < minSegmentMeters || outgoingDistance < minSegmentMeters) {
+      continue;
+    }
+
+    const incomingHeading = getHeading(prev.lat, prev.lng, current.lat, current.lng);
+    const outgoingHeading = getHeading(current.lat, current.lng, next.lat, next.lng);
+    let turnAngle = Math.abs(outgoingHeading - incomingHeading);
+    if (turnAngle > 180) turnAngle = 360 - turnAngle;
+
+    if (turnAngle >= minTurnDegrees) {
+      turns.push(path[i]);
+    }
+  }
+
+  return dedupeNearbyPoints(turns, 12);
+}
+
+function dedupeNearbyPoints(points, thresholdMeters) {
+  const unique = [];
+
+  points.forEach((point) => {
+    const coords = getCoordinate(point);
+    const isDuplicate = unique.some((existingPoint) => {
+      const existingCoords = getCoordinate(existingPoint);
+      return getHaversineDistance(
+        coords.lat,
+        coords.lng,
+        existingCoords.lat,
+        existingCoords.lng
+      ) < thresholdMeters;
+    });
+
+    if (!isDuplicate) {
+      unique.push(point);
+    }
+  });
+
+  return unique;
 }
 
 function getHaversineDistance(lat1, lng1, lat2, lng2) {
@@ -669,6 +853,7 @@ function clearRoute() {
   autocompleteState.destination.input.value = "";
   autocompleteState.destination.selectedPlace = null;
   lastRoutePath = null;
+  lastTurnPoints = [];
 
   hideSuggestions("origin");
   hideSuggestions("destination");
@@ -677,6 +862,11 @@ function clearRoute() {
   if (activePolyline) {
     activePolyline.remove();
     activePolyline = null;
+  }
+  clearTurnMarkers();
+  if (turnMarkerRedrawId !== null) {
+    cancelAnimationFrame(turnMarkerRedrawId);
+    turnMarkerRedrawId = null;
   }
 
   // Reset tour controls
