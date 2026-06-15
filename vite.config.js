@@ -2,6 +2,7 @@ import { resolve } from 'path';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+    base: '/google-earth/',
     server: {
         port: 3000,
     },
